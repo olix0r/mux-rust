@@ -7,10 +7,12 @@ pub mod mux {
         use std::str;
 
         /// A simple wrapper type for an array of bytes.
-        #[deriving(PartialEq,Eq)]
+        #[deriving(Clone,PartialEq,Eq)]
         pub struct Buf<'t>(&'t [u8]);
         static EMPTY_BUF: Buf<'static> = Buf(&[]);
         impl<'t> Buf<'t> {
+            pub fn new(bytes: &'t [u8]) -> Buf<'t> { Buf(bytes) }
+
             #[inline]
             pub fn empty() -> Buf<'t> { EMPTY_BUF }
 
@@ -34,7 +36,7 @@ pub mod mux {
             }
         }
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Path<'t>(pub &'t [Buf<'t>]);
         static EMPTY_PATH: Path<'static> = Path(&[]);
         impl<'t> Path<'t> {
@@ -42,10 +44,13 @@ pub mod mux {
             pub fn empty() -> Path<'t> { EMPTY_PATH }
 
             // TODO
-            pub fn from_str<'u>(_: &'u [str]) -> Path<'u> { EMPTY_PATH }
+            pub fn from_str(_: &'t [str]) -> Path<'t> { EMPTY_PATH }
+
+            // TODO
+            pub fn from_bytes<'u>(_: &'u [u8]) -> Path<'u> { EMPTY_PATH }
         }
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Dentry<'t>(pub &'t str, pub &'t str);
         impl<'t> Dentry<'t> {
             pub fn source(&self) -> &'t str {
@@ -59,7 +64,7 @@ pub mod mux {
             }
         }
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Dtab<'t>(pub &'t [Dentry<'t>]);
         static EMPTY_DTAB: Dtab<'static> = Dtab(&[]);
         impl<'t> Dtab<'t> {
@@ -72,7 +77,7 @@ pub mod mux {
             }
         }
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Context<'t>(pub Buf<'t>, pub Buf<'t>);
         impl<'t> Context<'t> {
             pub fn key(&self) -> Buf<'t> {
@@ -86,12 +91,93 @@ pub mod mux {
             }
         }
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Contexts<'t>(pub &'t [Context<'t>]);
         static EMPTY_CONTEXTS: Contexts<'static> = Contexts(&[]);
         impl<'t> Contexts<'t> {
             #[inline]
             pub fn empty() -> Contexts<'t> { EMPTY_CONTEXTS }
+        }
+
+        pub trait Reader<'a> {
+            fn len(self) -> uint;
+            fn read_u8(self) -> Result<Read<'a, Self, u8>, ReadErr<'a, Self>>;
+            fn read_i8(self) -> Result<Read<'a, Self, i8>, ReadErr<'a, Self>>;
+            fn read_u16_be(self) -> Result<Read<'a, Self, u16>, ReadErr<'a, Self>>;
+            fn read_uint_be(self, nbytes: uint) -> Result<Read<'a, Self, u64>, ReadErr<'a, Self>>;
+            fn read_slice(self, nbytes: uint) -> Result<Read<'a, Self, &'a [u8]>, ReadErr<'a, Self>>;
+        }
+        pub enum ReadErr<'a, R: Reader<'a>> {
+            ReadUnderflow(R)
+        }
+
+        pub struct Read<'a, R: Reader<'a>, T>(pub R, pub T);
+
+        pub trait FlatMap<'a, R: Reader<'a>, T> {
+            fn flat_map<U>(self, f: |Read<'a, R, T>| -> Result<Read<'a, R, U>, ReadErr<'a, R>>) -> Result<Read<'a, R, U>, ReadErr<'a, R>>;
+        }
+
+        impl<'a, R: Reader<'a>, T> FlatMap<'a, R, T> for Result<Read<'a, R, T>, ReadErr<'a, R>> {
+            fn flat_map<U>(self, f: |Read<'a, R, T>| -> Result<Read<'a, R, U>, ReadErr<'a, R>>) -> Result<Read<'a, R, U>, ReadErr<'a, R>> {
+                match self {
+                    Err(e) => Err(e),
+                    Ok(read) => f(read),
+                }
+            }
+        }
+
+        impl<'a> Reader<'a> for Buf<'a> {
+
+            fn len(self) -> uint {
+                self.as_bytes().len()
+            }
+
+            fn read_u8(self) -> Result<Read<'a, Buf<'a>, u8>, ReadErr<'a, Buf<'a>>> {
+                match self {
+                    Buf(bytes) if bytes.len() == 0 =>
+                        Err(ReadUnderflow(self)),
+                    Buf(bytes) =>
+                        Ok(Read(Buf(bytes.slice_from(1)), bytes[0])),
+                }
+            }
+
+            fn read_i8(self) -> Result<Read<'a, Buf<'a>, i8>, ReadErr<'a, Buf<'a>>> {
+                self.read_u8().map(|Read(reader, u)| -> Read<'a, Buf<'a>, i8> { Read(reader, u as i8) })
+            }
+
+            fn read_slice(self, nbytes: uint) -> Result<Read<'a, Buf<'a>, &'a [u8]>, ReadErr<'a, Buf<'a>>> {
+                match self {
+                    Buf(bytes) if bytes.len() < nbytes =>
+                        Err(ReadUnderflow(self)),
+                    Buf(bytes) =>
+                        Ok(Read(Buf(bytes.slice_from(nbytes)), bytes.slice_to(nbytes)))
+                }
+            }
+
+            /// Lifted from std::io::Reader
+            fn read_uint_be(self, nbytes: uint) -> Result<Read<'a, Buf<'a>, u64>, ReadErr<'a, Buf<'a>>> {
+                if self.len() < nbytes {
+                    return Err(ReadUnderflow(self));
+                }
+                let mut val = 0u64;
+                let mut i = nbytes;
+                let mut reader: Buf<'a> = self;
+                while i > 0 {
+                    i -= 1;
+                    match reader.read_u8() {
+                        Err(e) => return Err(e),
+                        Ok(Read(next_reader, n)) => {
+                            val += n as u64 << i * 8;
+                            reader = next_reader;
+                        },
+                    }
+                }
+                Ok(Read(reader, val))
+            }
+
+            fn read_u16_be(self) -> Result<Read<'a, Buf<'a>, u16>, ReadErr<'a, Buf<'a>>> {
+                self.read_uint_be(2).map(|Read(r, n)| -> Read<'a, Buf<'a>, u16> { Read(r, n as u16) })
+            }
         }
     }
 
@@ -110,13 +196,27 @@ pub mod mux {
 
     /// Mux protocol support for de/serializing mux messages.
     pub mod proto {
-        use std::io::{IoResult, IoError, Reader, BufReader};
-        use super::misc::{Buf, Context, Contexts, Path, Dtab};
+        use super::misc::{Buf, Context, Contexts, Path, Dtab, Reader, Read, ReadErr, ReadUnderflow, FlatMap};
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub struct Tag(u64);
 
-        #[deriving(PartialEq,Eq,Show)]
+        #[deriving(Clone,PartialEq,Eq,Show)]
+        pub enum Type {
+            TreqType,
+            RreqType,
+            TdispatchType,
+            RdispatchType,
+            TdrainType,
+            RdrainType,
+            TpingType,
+            RpingType,
+            TdiscardedType,
+            TleaseType,
+            RerrType,
+        }
+
+        #[deriving(Clone,PartialEq,Eq,Show)]
         pub enum Message<'t> {
             // Treq(Tag, Option<TraceId>, Buf),
             // RreqOk(Tag, Buf),
@@ -139,66 +239,114 @@ pub mod mux {
             Rerr(Tag, &'t str),
         }
 
-        trait MessageReader<'t> {
-            fn read_type(&mut self) -> IoResult<i8>;
-            fn read_tag(&mut self) -> IoResult<Tag>;
-            fn read_contexts(&mut self) -> IoResult<Contexts<'t>>;
-
-            //fn read_message(&mut self) -> IoResult<Message<'t>, IoError>
-        }
-
-        impl<'t, R: Reader> MessageReader<'t> for R {
-            fn read_type(&mut self) -> IoResult<i8> { self.read_i8() }
-
-            fn read_tag(&mut self) -> IoResult<Tag> {
-                self.read_be_uint_n(3).map(|n| -> Tag { Tag(n) })
-            }
-
-            fn read_contexts(&mut self) -> IoResult<Contexts<'t>> {
-                match self.read_be_u16() {
-                    Err(io) => Err(io),
-
-                    Ok(n) if n == 0 =>
-                        Ok(Contexts::empty()),
-
-                    Ok(_n) => {
-                        let n = _n as uint;
-                        let mut contexts: Vec<Context> = Vec::with_capacity(n);
-                        for i in range(0, n) {
-                            contexts.insert(i, Context(Buf::empty(), Buf::empty()));
-                        }
-                        Ok(Contexts(contexts.as_slice().clone()))
-                    }
-                }
-            }
-        }
-
-        pub enum DecodeErr {
-            IoErr(IoError),
+        #[deriving(Clone,PartialEq,Eq,Show)]
+        pub enum DecodeErr<E> {
+            DecodeUnderflow,
             UnknownType(i8),
+            OtherErr(E),
         }
+
+        pub type Decoded<T, E> = Result<T, DecodeErr<E>>;
 
         impl<'t> Message<'t> {
 
-            /// Decode a slice of bytes as a mux message.
-            pub fn decode<'u>(bytes: &'u [u8]) -> Result<Message<'u>, DecodeErr> {
-                let mut reader = BufReader::new(bytes);
+            fn decode_type<R: Reader<'t>, T, E>(reader: R, f: |R, Type| -> Decoded<T, E>) -> Decoded<T, E> {
+                match reader.read_i8() {
+                    Err(ReadUnderflow(_)) => Err(DecodeUnderflow),
+                    Ok(Read(reader, val)) => match val {
+                         1 => f(reader, TreqType),
+                        -1 => f(reader, RreqType),
 
-                match reader.read_type() {
-                    // Ok( 1) => Some(decodeTreq(tag, rest)),
-                    // Ok(-1) => Some(decodeRreq(tag, rest)),
+                         2 => f(reader, TdispatchType),
+                        -2 => f(reader, RdispatchType),
 
-                    // Ok( 2) => decodeTdispatch(tag, rest),
-                    // Ok(-2) => decodeRdispatch(tag, rest),
+                         64 => f(reader, TdrainType),
+                        -64 => f(reader, RdrainType),
 
-                    Ok(kind) => Err(UnknownType(kind)),
-                    Err(ioe) => Err(IoErr(ioe)),
+                         65 => f(reader, TpingType),
+                        -65 => f(reader, RpingType),
+
+                        66 => f(reader, TdiscardedType),
+                        67 => f(reader, TleaseType),
+
+                        -128 => f(reader, RerrType),
+
+                        t => Err(UnknownType(t))
+                    }
                 }
             }
 
-            // fn decode_tdispatch<'u>(tag: Tag, bytes: &'u [u8]) -> Decoded<'u, Message<'u>> {
-            //     decodeContexts
-            // }
+            fn decode_tag<R: Reader<'t>, T, E>(reader: R, f: |R, Tag| -> Decoded<T, E>) -> Decoded<T, E> {
+                match reader.read_uint_be(3) {
+                    Err(ReadUnderflow(_)) => Err(DecodeUnderflow),
+                    Ok(Read(r, n)) => f(r, Tag(n)),
+                }
+            }
+
+            fn decode_buf<R: Reader<'t>, T, E>(reader: R, f: |R, Buf<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                let read_slice = reader.read_u16_be().flat_map(
+                    |Read(reader, nbytes)| -> Result<Read<'t, R, &'t [u8]>, ReadErr<'t, R>> {
+                        reader.read_slice(nbytes as uint)
+                    });
+                match read_slice {
+                    Err(ReadUnderflow(_)) => Err(DecodeUnderflow),
+                    Ok(Read(reader, slice)) => f(reader, Buf::new(slice)),
+                }
+            }
+
+            fn decode_context<R: Reader<'t>, T, E>(reader: R, f: |R, Context<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                Message::decode_buf(reader, |reader, key| -> Decoded<T, E> {
+                    Message::decode_buf(reader, |reader, val| -> Decoded<T, E> {
+                        f(reader, Context(key, val))
+                    })
+                })
+            }
+
+            fn decode_contexts<R: Reader<'t>, T, E>(reader: R, f: |R, Contexts<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                match reader.read_u16_be() {
+                    Err(ReadUnderflow(_)) => Err(DecodeUnderflow),
+
+                    Ok(Read(reader, _n)) =>
+                        if _n == 0 {
+                            f(reader, Contexts::empty())
+                        } else {
+                            let n = _n as uint;
+                            let mut vec: Vec<Context> = Vec::with_capacity(n);
+                            for i in range(0, n) {
+                                vec.insert(i, Context(Buf::empty(), Buf::empty()));
+                            }
+                            //let slice = vec.as_slice();
+                            // FIXME lifetime
+                            f(reader, Contexts::empty())
+                        }
+                }
+            }
+
+            fn decode_destination<R: Reader<'t>, T, E>(reader: R, f: |R, Path<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                Message::decode_buf(reader, |reader, buf| -> Decoded<T, E> {
+                    // FIXME
+                    f(reader, Path::empty())
+                })
+            }
+
+            fn with_message<R: Reader<'t>, T, E>(reader: R, f: |R, Message<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                Message::decode_type(reader, |reader, typ| -> Decoded<T, E> {
+                    Message::decode_tag(reader, |reader, tag| -> Decoded<T, E> {
+                        match typ {
+                            TdispatchType => Message::decode_contexts(reader, |_, _| -> Decoded<T, E> {
+                                Err(UnknownType(2))
+                            }),
+                            _ => Err(UnknownType(-128)),
+                        }
+                    })
+                })
+            }
+
+            /// Decode a slice of bytes as a mux message.
+            pub fn decoded<T, E>(bytes: &'t [u8], f: |Message<'t>| -> Decoded<T, E>) -> Decoded<T, E> {
+                let buf = Buf::new(bytes);
+                Message::with_message(buf, |_, msg| -> Decoded<T, E> { f(msg) })
+            }
 
             /// Encode a mux message as bytes.
             pub fn encode(&self) -> Vec<u8> {
@@ -215,7 +363,7 @@ pub mod mux {
 
             fn context_sz<'u>(contexts: &'u [Context]) -> uint {
                 (*contexts).iter().fold(0u, |sum, &Context(kbuf, vbuf)| -> uint {
-                    sum + kbuf.as_bytes().len() + vbuf.as_bytes().len()
+                    sum + 2+kbuf.len() + 2+vbuf.len()
                 })
             }
         }
@@ -223,7 +371,7 @@ pub mod mux {
         #[cfg(test)]
         mod test {
             use mux::misc::{Contexts, Path, Dtab, Buf};
-            use super::{Tag, Tdispatch, Message, IoErr, UnknownType};
+            use super::{Tag, Tdispatch, Message, Decoded};
 
             fn mk_tdispatch<'t>() -> Message<'t> {
                 let tag = Tag(1u as u64);
@@ -239,19 +387,13 @@ pub mod mux {
                 let orig = mk_tdispatch();
                 let bytes = orig.encode();
 
-                match Message::decode(bytes.as_slice()) {
-                    Ok(decoded@Tdispatch(_,_,_,_,_)) =>
-                        assert_eq!(orig, decoded),
-
-                    Ok(other) =>
-                        fail!("decoded unexpected message type: {}", other),
-
-                    Err(IoErr(ioe)) =>
-                        fail!("I/O error: {}", ioe),
-
-                    Err(UnknownType(typ)) =>
-                        fail!("unknown message type: {}", typ),
-                }
+                let mut decoded: Option<Message> = None;
+                let result: Decoded<bool, &str> = Message::decoded(bytes.as_slice(), |msg| {
+                    decoded = Some(msg);
+                    Ok(true)
+                 });
+                assert_eq!(decoded, Some(orig));
+                assert_eq!(result, Ok(true));
             }
         }
     }
