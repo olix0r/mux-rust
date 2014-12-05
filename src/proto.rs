@@ -1,6 +1,6 @@
 use std::io::{IoResult, IoError, BufReader};
 
-use misc::{Context, Path, Dtab};
+use misc::{Context, Path, Dtab, Dentry};
 
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub struct Tag(u64);
@@ -41,6 +41,9 @@ trait MessageReader : Reader {
     fn read_buf(&mut self) -> IoResult<Vec<u8>>;
     fn read_context(&mut self) -> IoResult<Context>;
     fn read_contexts(&mut self) -> IoResult<Vec<Context>>;
+    fn read_path(&mut self) -> IoResult<Path>;
+    fn read_dentry(&mut self) -> IoResult<Dentry>;
+    fn read_dtab(&mut self) -> IoResult<Dtab>;
     fn read_tdispatch(&mut self, tag: Tag) -> IoResult<Message>;
     fn read_tag(&mut self) -> IoResult<Tag>;
 }
@@ -81,14 +84,39 @@ impl<'t> MessageReader for BufReader<'t> {
         self.read_length_encoded(|r, _| -> IoResult<Context> { r.read_context() })
     }
 
+    fn read_path(&mut self) -> IoResult<Path> {
+        self.read_buf().map(|buf| -> Path { Path::from_bytes(buf) })
+    }
+
+    fn read_dentry(&mut self) -> IoResult<Dentry> {
+        match self.read_path() {
+            Err(ioe) => Err(ioe),
+            Ok(src) => match self.read_buf() {
+                Err(ioe) => Err(ioe),
+                Ok(tgt) => Ok(Dentry { src: src, tgt: tgt })
+            }
+        }
+    }
+
+    fn read_dtab(&mut self) -> IoResult<Dtab> {
+        self.read_length_encoded(|r, _| -> IoResult<Dentry> {
+            r.read_dentry()
+        }).map(|dentries| -> Dtab {
+            Dtab(dentries)
+        })
+    }
+
     fn read_tdispatch(&mut self, tag: Tag) -> IoResult<Message> {
         match self.read_contexts() {
             Err(ioe) => Err(ioe),
-            Ok(_) => match self.read_buf() {
+            Ok(contexts) => match self.read_path() {
                 Err(ioe) => Err(ioe),
-                Ok(_) => {
-                    // todo
-                    Ok(Rerr(tag, "fuckit".to_string()))
+                Ok(dst) => match self.read_dtab() {
+                    Err(ioe) => Err(ioe),
+                    Ok(dtab) => match self.read_to_end() {
+                        Err(ioe) => Err(ioe),
+                        Ok(body) => Ok(Tdispatch(tag, contexts, dst, dtab, body))
+                    }
                 }
             }
         }

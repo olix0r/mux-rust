@@ -11,7 +11,7 @@ impl Path {
 }
 
 #[deriving(Clone,PartialEq,Eq,Show)]
-pub struct Dentry { pub src: String, pub tgt: String }
+pub struct Dentry { pub src: Path, pub tgt: Vec<u8> }
 
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub struct Dtab(pub Vec<Dentry>);
