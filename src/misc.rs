@@ -19,5 +19,5 @@ pub struct Trace {
     pub span_id: u64,
     pub parent_id: u64,
     pub trace_id: u64,
-    pub flags: u64,
+    pub flags: u8,
 }

@@ -1,9 +1,11 @@
-use std::io::{IoResult, IoError, BufReader, InvalidInput};
+use std::io::{IoResult, IoError, Reader, Writer, InvalidInput};
 
-use misc::{Context, Contexts, Dtab, Dentry, Trace};
+use misc::{Context, Dtab, Dentry, Trace};
 
 #[deriving(Clone,PartialEq,Eq,Show)]
-pub struct Tag(u64);
+pub struct Tag(pub u8, pub u8, pub u8);
+
+struct TraceId(u64, u64, u64);
 
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub enum Message {
@@ -12,10 +14,10 @@ pub enum Message {
     RreqError(Tag, String),
     RreqNack(Tag),
 
-    Tdispatch(Tag, Contexts, String, Dtab, Vec<u8>),
-    RdispatchOk(Tag, Contexts, Vec<u8>),
-    RdispatchError(Tag, Contexts, String),
-    RdispatchNack(Tag, Contexts),
+    Tdispatch(Tag, Vec<Context>, String, Dtab, Vec<u8>),
+    RdispatchOk(Tag, Vec<Context>, Vec<u8>),
+    RdispatchError(Tag, Vec<Context>, String),
+    RdispatchNack(Tag, Vec<Context>),
 
     Tdrain(Tag),
     Rdrain(Tag),
@@ -28,42 +30,12 @@ pub enum Message {
     Rerr(Tag, String),
 }
 
-trait MessageReader : Reader {
-    fn read_vec<T>(&mut self, len: uint, f: |&mut Self, uint| -> IoResult<T>) -> IoResult<Vec<T>>;
-    fn read_buf(&mut self) -> IoResult<Vec<u8>>;
-    fn read_string(&mut self) -> IoResult<String>;
+pub trait MessageReader : Reader {
 
-    fn read_context(&mut self) -> IoResult<Context>;
-    fn read_contexts(&mut self) -> IoResult<Contexts>;
-
-    fn read_dentry(&mut self) -> IoResult<Dentry>;
-    fn read_dtab(&mut self) -> IoResult<Dtab>;
-
-    fn read_tag(&mut self) -> IoResult<Tag>;
-
-    fn read_trace(&mut self) -> IoResult<Option<Trace>>;
-
-    fn read_treq(&mut self, tag: Tag) -> IoResult<Message>;
-    fn read_rreq(&mut self, tag: Tag) -> IoResult<Message>;
-
-    fn read_tdispatch(&mut self, tag: Tag) -> IoResult<Message>;
-    fn read_rdispatch(&mut self, tag: Tag) -> IoResult<Message>;
-
-    fn read_tdiscarded(&mut self) -> IoResult<Message>;
-
-    fn read_tlease(&mut self) -> IoResult<Message>;
-
-    fn read_message(&mut self) -> IoResult<Message>;
-}
-
-struct TraceId(u64, u64, u64);
-
-impl<'t> MessageReader for BufReader<'t> {
-
-    fn read_vec<T>(
+    fn read_len_vec<T>(
         &mut self,
         len: uint,
-        f: |&mut BufReader<'t>, uint| -> IoResult<T>
+        f: |&mut Self, uint| -> IoResult<T>
      ) -> IoResult<Vec<T>> {
         let mut vec = Vec::with_capacity(len);
         for i in range(0, len) {
@@ -76,15 +48,15 @@ impl<'t> MessageReader for BufReader<'t> {
     }
 
 
-    fn read_buf(&mut self) -> IoResult<Vec<u8>> {
+    fn read_len_buf(&mut self) -> IoResult<Vec<u8>> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe),
             Ok(len) => self.read_exact(len as uint)
         }
     }
 
-    fn read_string(&mut self) -> IoResult<String> {
-        match self.read_buf() {
+    fn read_len_string(&mut self) -> IoResult<String> {
+        match self.read_len_buf() {
             Err(ioe) => Err(ioe),
             Ok(buf) => String::from_utf8(buf).map_err(|_| -> IoError {
                 IoError {
@@ -97,28 +69,28 @@ impl<'t> MessageReader for BufReader<'t> {
     }
 
     fn read_context(&mut self) -> IoResult<Context> {
-        match self.read_buf() {
+        match self.read_len_buf() {
             Err(ioe) => Err(ioe),
-            Ok(key) => match self.read_buf() {
+            Ok(key) => match self.read_len_buf() {
                 Err(ioe) => Err(ioe),
                 Ok(val) => Ok(Context { key: key, val: val })
             }
         }
     }
 
-    fn read_contexts(&mut self) -> IoResult<Contexts> {
+    fn read_contexts(&mut self) -> IoResult<Vec<Context>> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe),
-            Ok(len) => self.read_vec(len as uint, |r, _| -> IoResult<Context> {
+            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
                 r.read_context()
-            }).map(|ctxs| -> Contexts { Contexts(ctxs) })
+            })
         }
     }
 
     fn read_dentry(&mut self) -> IoResult<Dentry> {
-        match self.read_string() {
+        match self.read_len_string() {
             Err(ioe) => Err(ioe),
-            Ok(src) => match self.read_string() {
+            Ok(src) => match self.read_len_string() {
                 Err(ioe) => Err(ioe),
                 Ok(tree) => Ok(Dentry { src: src, tree: tree })
             }
@@ -128,14 +100,20 @@ impl<'t> MessageReader for BufReader<'t> {
     fn read_dtab(&mut self) -> IoResult<Dtab> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe),
-            Ok(len) => self.read_vec(len as uint, |r, _| -> IoResult<Dentry> {
+            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Dentry> {
                 r.read_dentry()
             }).map(|dentries| -> Dtab { Dtab(dentries) })
         }
     }
 
     fn read_tag(&mut self) -> IoResult<Tag> {
-        self.read_be_uint_n(3).map(|t| -> Tag { Tag(t) })
+        match self.read_u8() {
+            Err(ioe) => Err(ioe),
+            Ok(a) => match self.read_u8() {
+                Err(ioe) => Err(ioe),
+                Ok(b) => self.read_u8().map(|c| -> Tag { Tag(a, b, c) })
+            }
+        }
     }
 
     fn read_trace(&mut self) -> IoResult<Option<Trace>> {
@@ -143,7 +121,7 @@ impl<'t> MessageReader for BufReader<'t> {
             Err(ioe) => Err(ioe),
             Ok(nkeys) => {
                 let mut curr_trace: Option<TraceId> = None;
-                let mut curr_flags: u64 = 0;
+                let mut curr_flags: u8 = 0;
 
                 for _ in range(0, nkeys) {
                     match self.read_u8() {
@@ -167,7 +145,7 @@ impl<'t> MessageReader for BufReader<'t> {
                                     Ok(bytes) => match bytes.last() {
                                         None => (), // let the error be handled by a subsequent read...
                                         Some(byte) =>
-                                            curr_flags = *byte as u64,
+                                            curr_flags = *byte,
                                     }
                                 },
                                 (status, vsize) => return Err(IoError {
@@ -219,7 +197,7 @@ impl<'t> MessageReader for BufReader<'t> {
     fn read_tdispatch(&mut self, tag: Tag) -> IoResult<Message> {
         match self.read_contexts() {
             Err(ioe) => Err(ioe),
-            Ok(contexts) => match self.read_string() {
+            Ok(contexts) => match self.read_len_string() {
                 Err(ioe) => Err(ioe),
                 Ok(dst) => match self.read_dtab() {
                     Err(ioe) => Err(ioe),
@@ -307,5 +285,121 @@ impl<'t> MessageReader for BufReader<'t> {
                 }
             }
         }
+    }
+}
+
+pub trait MessageWriter : Writer {
+    fn write_len_vec<T, I: Iterator<T>>(
+        &mut self,
+        iter: I,
+        f: |&mut Self, T| -> IoResult<()>
+    ) -> IoResult<()>;
+
+    fn write_len_buf(&mut self, buf: &[u8]) -> IoResult<()>;
+    fn write_len_str(&mut self, s: &str) -> IoResult<()>;
+
+    fn write_context(&mut self, context: &Context) -> IoResult<()>;
+
+    fn write_dentry(&mut self, dentry: &Dentry) -> IoResult<()>;
+    fn write_dtab(&mut self, dtab: &Dtab) -> IoResult<()>;
+
+    fn write_trace(&mut self, trace: Option<Trace>) -> IoResult<()> {
+        match trace {
+            None => self.write_u8(0),
+            Some(trace) => match self.write_u8(2) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_u8(0) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => match self.write_u8(24) {
+                        Err(ioe) => Err(ioe),
+                        Ok(_) => match self.write_be_u64(trace.span_id) {
+                            Err(ioe) => Err(ioe),
+                            Ok(_) => match self.write_be_u64(trace.parent_id) {
+                                Err(ioe) => Err(ioe),
+                                Ok(_) => match self.write_be_u64(trace.trace_id) {
+                                    Err(ioe) => Err(ioe),
+                                    Ok(_) => self.write([1, 1, trace.flags])
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+        }
+    }
+
+    fn write_head(&mut self, typ: i8, tag: Tag) -> IoResult<()> {
+        match self.write_i8(typ) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => {
+                let Tag(b0, b1, b2) = tag;
+                self.write([b0, b1, b2])
+            }
+        }
+    }
+
+    fn write_message(&mut self, m: Message) -> IoResult<()> {
+        match m {
+            Treq(tag, trace, body) => match self.write_head(1, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_trace(trace) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write(body.as_slice())
+                }
+            },
+
+            RreqOk(tag, body) => match self.write_head(-1, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => self.write(body.as_slice())
+            },
+            RreqError(tag, s) => match self.write_head(-1, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => self.write_str(s.as_slice())
+            },
+            RreqNack(tag) => self.write_head(-1, tag),
+
+            Tdispatch(tag, contexts, dst, dtab, body) => match self.write_head(2, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => {
+                    let ctxs = self.write_len_vec(contexts.iter(), |w, ctx| -> IoResult<()> {
+                        w.write_context(ctx)
+                    });
+                    match ctxs {
+                        Err(ioe) => Err(ioe),
+                        Ok(_) => match self.write_len_str(dst.as_slice()) {
+                            Err(ioe) => Err(ioe),
+                            Ok(_) => match self.write_dtab(&dtab) {
+                                Err(ioe) => Err(ioe),
+                                Ok(_) => self.write(body.as_slice())
+                            }
+                        }
+                    }
+                }
+            },
+
+            // RdispatchOk(Tag, Vec<Context>, Vec<u8>),
+            // RdispatchError(Tag, Vec<Context>, String),
+            // RdispatchNack(Tag, Vec<Context>),
+
+            // Tdrain(Tag),
+            // Rdrain(Tag),
+
+            // Tping(Tag),
+            // Rping(Tag),
+            // Tdiscarded(u64, String),
+            // Tlease(u8, u64),
+
+            // Rerr(Tag, String),
+
+            _ => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_read_treq() {
     }
 }
