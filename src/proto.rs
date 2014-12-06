@@ -4,6 +4,7 @@ use misc::{Context, Dtab, Dentry, Trace};
 
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub struct Tag(pub u8, pub u8, pub u8);
+static MARKER_TAG: Tag = Tag(0,0,0);
 
 struct TraceId(u64, u64, u64);
 
@@ -289,19 +290,57 @@ pub trait MessageReader : Reader {
 }
 
 pub trait MessageWriter : Writer {
-    fn write_len_vec<T, I: Iterator<T>>(
-        &mut self,
-        iter: I,
-        f: |&mut Self, T| -> IoResult<()>
-    ) -> IoResult<()>;
+    fn write_len_vec<T>(&mut self, ts: &[T], f: |&mut Self, &T| -> IoResult<()>) -> IoResult<()> {
+        match self.write_be_u16(ts.len() as u16) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => {
+                for t in ts.iter() {
+                    match f(self, t) {
+                        Err(ioe) => return Err(ioe),
+                        Ok(_) => (),
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 
-    fn write_len_buf(&mut self, buf: &[u8]) -> IoResult<()>;
-    fn write_len_str(&mut self, s: &str) -> IoResult<()>;
+    fn write_len_buf(&mut self, buf: &[u8]) -> IoResult<()> {
+        match self.write_be_u16(buf.len() as u16) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => self.write(buf)
+        }
+    }
 
-    fn write_context(&mut self, context: &Context) -> IoResult<()>;
+    fn write_len_str(&mut self, s: &str) -> IoResult<()> {
+        match self.write_be_u16(s.len() as u16) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => self.write_str(s)
+        }
+    }
 
-    fn write_dentry(&mut self, dentry: &Dentry) -> IoResult<()>;
-    fn write_dtab(&mut self, dtab: &Dtab) -> IoResult<()>;
+    fn write_context(&mut self, context: &Context) -> IoResult<()> {
+        match self.write_len_buf(context.key.as_slice()) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => self.write_len_buf(context.val.as_slice())
+        }
+    }
+
+    fn write_contexts(&mut self, contexts: &[Context]) -> IoResult<()> {
+        self.write_len_vec(contexts, |w, ctx| -> IoResult<()> { w.write_context(ctx) })
+    }
+
+    fn write_dentry(&mut self, dentry: &Dentry) -> IoResult<()> {
+        match self.write_len_str(dentry.src.as_slice()) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => self.write_len_str(dentry.tree.as_slice())
+        }
+    }
+
+    fn write_dtab(&mut self, dtab: &Dtab) -> IoResult<()> {
+        let &Dtab(ref dentries) = dtab;
+        self.write_len_vec(dentries.as_slice(), |w, d| -> IoResult<()> { w.write_dentry(d) })
+    }
 
     fn write_trace(&mut self, trace: Option<Trace>) -> IoResult<()> {
         match trace {
@@ -338,9 +377,9 @@ pub trait MessageWriter : Writer {
         }
     }
 
-    fn write_message(&mut self, m: Message) -> IoResult<()> {
+    fn write_message(&mut self, m: &Message) -> IoResult<()> {
         match m {
-            Treq(tag, trace, body) => match self.write_head(1, tag) {
+            &Treq(tag, trace, ref body) => match self.write_head(1, tag) {
                 Err(ioe) => Err(ioe),
                 Ok(_) => match self.write_trace(trace) {
                     Err(ioe) => Err(ioe),
@@ -348,58 +387,109 @@ pub trait MessageWriter : Writer {
                 }
             },
 
-            RreqOk(tag, body) => match self.write_head(-1, tag) {
+            &RreqOk(tag, ref body) => match self.write_head(-1, tag) {
                 Err(ioe) => Err(ioe),
                 Ok(_) => self.write(body.as_slice())
             },
-            RreqError(tag, s) => match self.write_head(-1, tag) {
+            &RreqError(tag, ref s) => match self.write_head(-1, tag) {
                 Err(ioe) => Err(ioe),
                 Ok(_) => self.write_str(s.as_slice())
             },
-            RreqNack(tag) => self.write_head(-1, tag),
+            &RreqNack(tag) => self.write_head(-1, tag),
 
-            Tdispatch(tag, contexts, dst, dtab, body) => match self.write_head(2, tag) {
+            &Tdispatch(tag, ref contexts, ref dst, ref dtab, ref body) => match self.write_head(2, tag) {
                 Err(ioe) => Err(ioe),
-                Ok(_) => {
-                    let ctxs = self.write_len_vec(contexts.iter(), |w, ctx| -> IoResult<()> {
-                        w.write_context(ctx)
-                    });
-                    match ctxs {
+                Ok(_) => match self.write_contexts(contexts.as_slice()) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => match self.write_len_str(dst.as_slice()) {
                         Err(ioe) => Err(ioe),
-                        Ok(_) => match self.write_len_str(dst.as_slice()) {
+                        Ok(_) => match self.write_dtab(dtab) {
                             Err(ioe) => Err(ioe),
-                            Ok(_) => match self.write_dtab(&dtab) {
-                                Err(ioe) => Err(ioe),
-                                Ok(_) => self.write(body.as_slice())
-                            }
-                        }
+                            Ok(_) => self.write(body.as_slice())
+                         }
                     }
                 }
             },
 
-            // RdispatchOk(Tag, Vec<Context>, Vec<u8>),
-            // RdispatchError(Tag, Vec<Context>, String),
-            // RdispatchNack(Tag, Vec<Context>),
+            &RdispatchOk(tag, ref contexts, ref body) => match self.write_head(-2, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_contexts(contexts.as_slice()) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write(body.as_slice())
+                }
+            },
+            &RdispatchError(tag, ref contexts, ref msg) => match self.write_head(-2, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_contexts(contexts.as_slice()) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write_str(msg.as_slice())
+                }
+            },
+            &RdispatchNack(tag, ref contexts) => match self.write_head(-2, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => self.write_contexts(contexts.as_slice())
+            },
 
-            // Tdrain(Tag),
-            // Rdrain(Tag),
+            &Tdrain(tag) => self.write_head(64, tag),
+            &Rdrain(tag) => self.write_head(-64, tag),
 
-            // Tping(Tag),
-            // Rping(Tag),
-            // Tdiscarded(u64, String),
-            // Tlease(u8, u64),
+            &Tping(tag) => self.write_head(65, tag),
+            &Rping(tag) => self.write_head(-65, tag),
 
-            // Rerr(Tag, String),
+            &Tdiscarded(which, ref msg) => match self.write_head(67, MARKER_TAG) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_be_u64(which) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write_str(msg.as_slice())
+                }
+            },
 
-            _ => Ok(()),
+            &Tlease(unit, amount) => match self.write_head(67, MARKER_TAG) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => match self.write_u8(unit) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write_be_u64(amount)
+                }
+            },
+
+            &Rerr(tag, ref msg) => match self.write_head(-128, tag) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => self.write_str(msg.as_slice())
+            },
         }
     }
 }
 
+
+impl<R: Reader> MessageReader for R {}
+impl<W: Writer> MessageWriter for W {}
+
 #[cfg(test)]
 mod test {
+    use misc::{Context, Dentry, Dtab};
+    use super::{Tag, Tdispatch, MessageReader, MessageWriter};
+    use std::io::{BufReader, MemWriter};
 
     #[test]
-    fn test_read_treq() {
+    fn test_decode_encoded_tdispatch() {
+        let tag = Tag(0,0,1);
+        let contexts = vec![Context::new(vec![1], vec![2])];
+        let dst = "/ugh".to_string();
+        let dtab = Dtab(vec![Dentry::new("/foo".to_string(), "/bar".to_string())]);
+        let body = vec!['m' as u8, 'o' as u8, 'm' as u8];
+        let msg = Tdispatch(tag, contexts, dst, dtab, body);
+
+        let mut writer = MemWriter::new();
+        match writer.write_message(&msg) {
+            Err(_) => fail!("write error"),
+            Ok(_) => {
+                let vec = writer.unwrap();
+                let mut reader = BufReader::new(vec.as_slice());
+                match reader.read_message() {
+                    Err(_) => fail!("read error"),
+                    Ok(decoded) => assert_eq!(msg, decoded),
+                }
+            }
+        }
     }
 }
