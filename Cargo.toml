@@ -1,5 +1,5 @@
 [package]
 
-name = "mux-rust"
+name = "mux"
 version = "0.0.1"
 authors = ["Oliver Gould <ver@twitter.com>"]
