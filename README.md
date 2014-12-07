@@ -1,6 +1,6 @@
 # mux-rust #
 
-An implementation of the Mux protocol in Rust.
+An implementation of the [Mux protocol](https://twitter.github.io/finagle/guide/Protocols.html#mux) in Rust.
 
 Currently, this only includes a Reader and Writer for mux messages.
 
