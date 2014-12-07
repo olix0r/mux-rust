@@ -3,6 +3,8 @@
 
 #![crate_name = "mux"]
 #![experimental]
+#![crate_type = "rlib"]
+#![crate_type = "dylib"]
 
 pub mod misc;
 pub mod proto;
