@@ -8,6 +8,17 @@ use mux::writer::MessageWriter;
 use std::io::{BufReader, MemWriter};
 use test::Bencher;
 
+#[inline]
+fn read(buf: &[u8]) {
+    let mut reader = BufReader::new(buf);
+    reader.read_message().ok();
+}
+
+#[inline]
+fn write(msg: &Message) {
+    let mut writer = MemWriter::new();
+    writer.write_message(msg).ok();
+}
 
 static TDISPATCH_BUF: &'static [u8] = [
     types::TDISPATCH as u8,
@@ -46,27 +57,14 @@ static TDISPATCH_BUF: &'static [u8] = [
     // data: [0 .. 20)
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 
-
-#[inline]
-fn read_tdispatch() {
-    let mut reader = BufReader::new(TDISPATCH_BUF);
-    reader.read_message().ok();
-}
-
-#[inline]
-fn write_tdispatch(msg: &Message) {
-    let mut writer = MemWriter::new();
-    writer.write_message(msg).ok();
-}
-
 #[bench]
-fn bench_read_tdispatch(bench: &mut Bencher) {
-    bench.iter(|| read_tdispatch());
+fn bench_read(bench: &mut Bencher) {
+    bench.iter(|| read(TDISPATCH_BUF));
     bench.bytes = TDISPATCH_BUF.len() as u64;
 }
 
 #[bench]
-fn bench_write_tdispatch(bench: &mut Bencher) {
+fn bench_write(bench: &mut Bencher) {
     let msg = Tdispatch(
         Tag(0, 1, 2),
         vec![Context::new(vec![1,2,3,4], vec![6,7]),
@@ -74,6 +72,7 @@ fn bench_write_tdispatch(bench: &mut Bencher) {
         "/BAD".to_string(),
         Dtab(vec![Dentry::new("/BAD".to_string(), "/DAD".to_string())]),
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
-    bench.iter(|| write_tdispatch(&msg));
+
+    bench.iter(|| write(&msg));
     bench.bytes = TDISPATCH_BUF.len() as u64;
 }
