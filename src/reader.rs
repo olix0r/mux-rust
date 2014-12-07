@@ -117,18 +117,21 @@ pub trait MessageReader : Reader {
                                         Err(ioe) => return Err(ioe),
                                         Ok(parent_id) => match self.read_be_u64() {
                                             Err(ioe) => return Err(ioe),
-
-                                            Ok(trace_id) =>
-                                                curr_trace = Some(TraceId(span_id, parent_id, trace_id)),
+                                            Ok(trace_id) => {
+                                                let id = TraceId(span_id, parent_id, trace_id);
+                                                curr_trace = Some(id)
+                                            }
                                         }
                                     }
                                 },
                                 (2, vsize) => match self.read_exact(vsize as uint) {
                                     Err(ioe) => return Err(ioe),
                                     Ok(bytes) => match bytes.last() {
-                                        None => (), // let the error be handled by a subsequent read...
-                                        Some(byte) =>
-                                            curr_flags = *byte,
+                                        // let the error be handled by a subsequent read...
+                                        None => (),
+                                        Some(byte) => {
+                                            curr_flags = *byte
+                                        }
                                     }
                                 },
                                 (status, vsize) => return Err(IoError {
@@ -277,9 +280,11 @@ impl<R: Reader> MessageReader for R {}
 
 #[cfg(test)]
 mod test {
+    extern crate test;
+
     use std::io::{BufReader, MemWriter, IoResult};
 
-    use proto::{Tag, Tdiscarded};
+    use proto::Tag;
     use super::MessageReader;
 
     fn mk_reader(bytes: &[u8]) -> BufReader { BufReader::new(bytes) }
@@ -362,25 +367,6 @@ mod test {
         match read_u64_vec(0) {
             Err(ioe) => fail!("read error: {}", ioe),
             Ok(s) => assert_eq!(s, vec![])
-        }
-    }
-
-    static TDISCARDED_BUF: &'static [u8] = [
-        66, // type
-        0, 0, 0, // marker tag
-        0, 1, 2, // tag ref
-        66, 65, 68, // msg: BAD
-        ];
-
-    #[test]
-    fn test_tdiscarded() {
-        match mk_reader(TDISCARDED_BUF).read_message() {
-            Err(ioe) => fail!("read error: {}", ioe),
-            Ok(Tdiscarded(which, msg)) => {
-                assert_eq!(which, Tag(0, 1, 2));
-                assert_eq!(msg.as_slice(), "BAD")
-            }
-            Ok(msg) => fail!("unexpected message: {}", msg)
         }
     }
 }

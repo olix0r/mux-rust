@@ -128,9 +128,10 @@ pub trait MessageWriter : Writer {
     }
 
     fn write_len_str(&mut self, s: &str) -> IoResult<()> {
-        match self.write_be_u16(s.len() as u16) {
+        let bytes = s.as_bytes();
+        match self.write_be_u16(bytes.len() as u16) {
             Err(ioe) => Err(ioe),
-            Ok(_) => self.write_str(s)
+            Ok(_) => self.write(bytes)
         }
     }
 
