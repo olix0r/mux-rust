@@ -1,7 +1,7 @@
 use std::io::{IoResult, Writer, MemWriter};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{Header, Tag, MARKER_TAG, Message,
+use proto::{Header, Tag, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -169,7 +169,7 @@ pub trait MessageWriter : Writer {
             Ok(_) => {
                 let vec = buf.unwrap();
                 let bytes = vec.as_slice();
-                match self.write_header(Header(bytes.len() as u32, msg.get_type(), tag)) {
+                match self.write_header(Header(4 + bytes.len() as u32, msg.get_type(), tag)) {
                     Err(ioe) => Err(ioe),
                     Ok(_) => self.write(bytes)
                 }
@@ -186,15 +186,15 @@ mod test {
     use proto::{Message, Tdiscarded, Tag};
     use super::MessageWriter;
 
-    fn encode_message(m: &Message) -> Vec<u8> {
+    fn encode_framed(tag: Tag, m: &Message) -> Vec<u8> {
         let mut w = MemWriter::new();
-        w.write_message(m).ok();
+        w.write_framed(tag, m).ok();
         w.unwrap()
     }
 
     #[test]
     fn test_discarded() {
-        let vec = encode_framed(Tag(0, 1, 2), &Tdiscarded("BAD".to_string()));
+        let vec = encode_framed(Tag(0, 0, 0), &Tdiscarded(Tag(0, 1, 2), "BAD".to_string()));
         assert_eq!(vec, vec![
             00, 00, 00, 10, // size
             66, // type
