@@ -1,7 +1,7 @@
-use std::io::{IoResult, IoError, Reader, InvalidInput};
+use std::io::{IoResult, IoError, Reader, BufReader, InvalidInput};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{types, Tag, Message,
+use proto::{types, Header, Framed, Tag, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -157,21 +157,21 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_treq(&mut self, tag: Tag) -> IoResult<Message> {
+    fn read_treq(&mut self) -> IoResult<Message> {
         match self.read_trace() {
             Err(ioe) => Err(ioe),
             Ok(trace) => self.read_to_end().map(|bytes| -> Message {
-                Treq(tag, trace, bytes)
+                Treq(trace, bytes)
             })
         }
     }
 
-    fn read_rreq(&mut self, tag: Tag) -> IoResult<Message> {
+    fn read_rreq(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
-            Ok(0) => self.read_to_end().map(|buf| -> Message { RreqOk(tag, buf) }),
-            Ok(1) => self.read_to_string().map(|msg| -> Message { RreqError(tag, msg) }),
-            Ok(2) => Ok(RreqNack(tag)),
+            Ok(0) => self.read_to_end().map(|buf| -> Message { RreqOk(buf) }),
+            Ok(1) => self.read_to_string().map(|msg| -> Message { RreqError(msg) }),
+            Ok(2) => Ok(RreqNack),
             Ok(_) => Err(IoError {
                 kind: InvalidInput,
                 desc: "unknown rreq status",
@@ -180,7 +180,7 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_tdispatch(&mut self, tag: Tag) -> IoResult<Message> {
+    fn read_tdispatch(&mut self) -> IoResult<Message> {
         match self.read_contexts() {
             Err(ioe) => Err(ioe),
             Ok(contexts) => match self.read_len_string() {
@@ -189,14 +189,14 @@ pub trait MessageReader : Reader {
                     Err(ioe) => Err(ioe),
                     Ok(dtab) => match self.read_to_end() {
                         Err(ioe) => Err(ioe),
-                        Ok(body) => Ok(Tdispatch(tag, contexts, dst, dtab, body)),
+                        Ok(body) => Ok(Tdispatch(contexts, dst, dtab, body)),
                     }
                 }
             }
         }
     }
 
-    fn read_rdispatch(&mut self, tag: Tag) -> IoResult<Message> {
+    fn read_rdispatch(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
             Ok(status) => match self.read_contexts() {
@@ -204,15 +204,15 @@ pub trait MessageReader : Reader {
                 Ok(contexts) => match status {
                     0 => match self.read_to_end() {
                         Err(ioe) => Err(ioe),
-                        Ok(body) => Ok(RdispatchOk(tag, contexts, body)),
+                        Ok(body) => Ok(RdispatchOk(contexts, body)),
                     },
 
                     1 => match self.read_to_string() {
                         Err(ioe) => Err(ioe),
-                        Ok(desc) => Ok(RdispatchError(tag, contexts, desc)),
+                        Ok(desc) => Ok(RdispatchError(contexts, desc)),
                     },
 
-                    2 => Ok(RdispatchNack(tag, contexts)),
+                    2 => Ok(RdispatchNack(contexts)),
 
                     _ => Err(IoError {
                         kind: InvalidInput,
@@ -238,35 +238,57 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_message(&mut self) -> IoResult<Message> {
-        match self.read_i8() {
+    fn read_header(&mut self) -> IoResult<Header> {
+        match self.read_be_u32() {
             Err(ioe) => Err(ioe),
-            Ok(msg_type) => match self.read_tag() {
+            Ok(sz) => match self.read_i8() {
                 Err(ioe) => Err(ioe),
-                Ok(tag) => match msg_type {
-                    types::TREQ => self.read_treq(tag),
-                    types::RREQ => self.read_rreq(tag),
-
-                    types::TDISPATCH => self.read_tdispatch(tag),
-                    types::RDISPATCH => self.read_rdispatch(tag),
-
-                    types::TDRAIN => Ok(Tdrain(tag)),
-                    types::RDRAIN => Ok(Rdrain(tag)),
-
-                    types::TPING => Ok(Tping(tag)),
-                    types::RPING => Ok(Rping(tag)),
-
-                    types::TDISCARDED => self.read_tdiscarded(),
-
-                    types::TLEASE => self.read_tlease(),
-
-                    types::RERR =>
-                        self.read_to_string().map(|msg| -> Message { Rerr(tag, msg) }),
-
-                    _ => Err(IoError {
+                Ok(type_code) => match types::Message::from_i8(type_code) {
+                    None => Err(IoError {
                         kind: InvalidInput,
                         desc: "unknown message type",
-                        detail: None,
+                        detail: Some(format!("{}", type_code)),
+                    }),
+                    Some(typ) => match self.read_tag() {
+                        Err(ioe) => Err(ioe),
+                        Ok(tag) => Ok(Header(sz, typ, tag))
+                    }
+                }
+            }
+        }
+    }
+
+    fn read_message_body(&mut self, msg_type: types::Message) -> IoResult<Message> {
+        match msg_type {
+            types::Treq => self.read_treq(),
+            types::Rreq => self.read_rreq(),
+
+            types::Tdispatch => self.read_tdispatch(),
+            types::Rdispatch => self.read_rdispatch(),
+
+            types::Tdrain => Ok(Tdrain),
+            types::Rdrain => Ok(Rdrain),
+
+            types::Tping => Ok(Tping),
+            types::Rping => Ok(Rping),
+
+            types::Tdiscarded => self.read_tdiscarded(),
+
+            types::Tlease => self.read_tlease(),
+
+            types::Rerr => self.read_to_string().map(|msg| -> Message { Rerr(msg) }),
+        }
+    }
+
+    fn read_framed(&mut self) -> IoResult<Framed> {
+        match self.read_header() {
+            Err(ioe) => Err(ioe),
+            Ok(Header(len, msg_type, tag)) => match self.read_exact(len as uint) {
+                Err(ioe) => Err(ioe),
+                Ok(body) => {
+                    let mut buf = BufReader::new(body.as_slice());
+                    buf.read_message_body(msg_type).map(|msg| -> Framed {
+                        Framed(tag, msg)
                     })
                 }
             }

@@ -1,7 +1,7 @@
-use std::io::{IoResult, Writer};
+use std::io::{IoResult, Writer, MemWriter};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{types, Tag, MARKER_TAG, Message,
+use proto::{Header, Tag, MARKER_TAG, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -12,96 +12,59 @@ use proto::{types, Tag, MARKER_TAG, Message,
 
 pub trait MessageWriter : Writer {
 
-    fn write_message(&mut self, m: &Message) -> IoResult<()> {
+    fn write_message_body(&mut self, m: &Message) -> IoResult<()> {
         match m {
-            &Treq(tag, trace, ref body) =>
-                match self.write_head(types::TREQ, tag) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_trace(trace) {
-                        Err(ioe) => Err(ioe),
-                        Ok(_) => self.write(body.as_slice())
-                    }
-                },
-
-            &RreqOk(tag, ref body) =>
-                match self.write_head(types::RREQ, tag) {
+            &Treq(trace, ref body) =>
+                match self.write_trace(trace) {
                     Err(ioe) => Err(ioe),
                     Ok(_) => self.write(body.as_slice())
                 },
-            &RreqError(tag, ref s) =>
-                match self.write_head(types::RREQ, tag) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => self.write_str(s.as_slice())
-                },
-            &RreqNack(tag) =>
-                self.write_head(types::RREQ, tag),
 
-            &Tdispatch(tag, ref contexts, ref dst, ref dtab, ref body) =>
-                match self.write_head(types::TDISPATCH, tag) {
+            &RreqOk(ref body) => self.write(body.as_slice()),
+            &RreqError(ref s) => self.write_str(s.as_slice()),
+            &RreqNack => Ok(()),
+
+            &Tdispatch(ref contexts, ref dst, ref dtab, ref body) =>
+                match self.write_contexts(contexts.as_slice()) {
                     Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_contexts(contexts.as_slice()) {
+                    Ok(_) => match self.write_len_str(dst.as_slice()) {
                         Err(ioe) => Err(ioe),
-                        Ok(_) => match self.write_len_str(dst.as_slice()) {
+                        Ok(_) => match self.write_dtab(dtab) {
                             Err(ioe) => Err(ioe),
-                            Ok(_) => match self.write_dtab(dtab) {
-                                Err(ioe) => Err(ioe),
-                                Ok(_) => self.write(body.as_slice())
-                            }
+                            Ok(_) => self.write(body.as_slice())
                         }
                     }
                 },
 
-            &RdispatchOk(tag, ref contexts, ref body) =>
-                match self.write_head(types::RDISPATCH, tag) {
+            &RdispatchOk(ref contexts, ref body) =>
+                match self.write_contexts(contexts.as_slice()) {
                     Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_contexts(contexts.as_slice()) {
-                        Err(ioe) => Err(ioe),
-                        Ok(_) => self.write(body.as_slice())
-                    }
+                    Ok(_) => self.write(body.as_slice())
                 },
-            &RdispatchError(tag, ref contexts, ref msg) =>
-                match self.write_head(types::RDISPATCH, tag) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_contexts(contexts.as_slice()) {
-                        Err(ioe) => Err(ioe),
-                        Ok(_) => self.write_str(msg.as_slice())
-                    }
-                },
-            &RdispatchNack(tag, ref contexts) =>
-                match self.write_head(types::RDISPATCH, tag) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => self.write_contexts(contexts.as_slice())
-                },
-
-            &Tdrain(tag) => self.write_head(types::TDRAIN, tag),
-            &Rdrain(tag) => self.write_head(types::RDRAIN, tag),
-
-            &Tping(tag) => self.write_head(types::TPING, tag),
-            &Rping(tag) => self.write_head(types::RPING, tag),
-
-            &Tdiscarded(which, ref msg) =>
-                match self.write_head(types::TDISCARDED, MARKER_TAG) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_tag(which) {
-                        Err(ioe) => Err(ioe),
-                        Ok(_) => self.write_str(msg.as_slice())
-                    }
-                },
-
-            &Tlease(unit, amount) =>
-                match self.write_head(types::TLEASE, MARKER_TAG) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_u8(unit) {
-                        Err(ioe) => Err(ioe),
-                        Ok(_) => self.write_be_u64(amount)
-                    }
-                },
-
-            &Rerr(tag, ref msg) =>
-                match self.write_head(types::RERR, tag) {
+            &RdispatchError(ref contexts, ref msg) =>
+                match self.write_contexts(contexts.as_slice()) {
                     Err(ioe) => Err(ioe),
                     Ok(_) => self.write_str(msg.as_slice())
                 },
+            &RdispatchNack(ref contexts) =>
+                self.write_contexts(contexts.as_slice()),
+
+            &Tdrain | &Rdrain | &Tping | &Rping => Ok(()),
+
+            &Tdiscarded(which, ref msg) =>
+                match self.write_tag(which) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write_str(msg.as_slice())
+                },
+
+            &Tlease(unit, amount) =>
+                match self.write_u8(unit) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write_be_u64(amount)
+                },
+
+            &Rerr(ref msg) =>
+                self.write_str(msg.as_slice()),
         }
     }
 
@@ -188,10 +151,29 @@ pub trait MessageWriter : Writer {
         self.write([b0, b1, b2])
     }
 
-    fn write_head(&mut self, typ: i8, tag: Tag) -> IoResult<()> {
-        match self.write_i8(typ) {
+    fn write_header(&mut self, hdr: Header) -> IoResult<()> {
+        let Header(len, typ, tag) = hdr;
+        match self.write_be_u32(len) {
             Err(ioe) => Err(ioe),
-            Ok(_) => self.write_tag(tag)
+            Ok(_) => match self.write_i8(typ as i8) {
+                Err(ioe) => Err(ioe),
+                Ok(_) => self.write_tag(tag)
+            }
+        }
+    }
+
+    fn write_framed(&mut self, tag: Tag, msg: &Message) -> IoResult<()> {
+        let mut buf = MemWriter::new();
+        match buf.write_message_body(msg) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => {
+                let vec = buf.unwrap();
+                let bytes = vec.as_slice();
+                match self.write_header(Header(bytes.len() as u32, msg.get_type(), tag)) {
+                    Err(ioe) => Err(ioe),
+                    Ok(_) => self.write(bytes)
+                }
+            }
         }
     }
 }
@@ -212,8 +194,9 @@ mod test {
 
     #[test]
     fn test_discarded() {
-        let vec = encode_message(&Tdiscarded(Tag(0, 1, 2), "BAD".to_string()));
+        let vec = encode_framed(Tag(0, 1, 2), &Tdiscarded("BAD".to_string()));
         assert_eq!(vec, vec![
+            00, 00, 00, 10, // size
             66, // type
             0, 0, 0, // marker tag
             0, 1, 2, // tag ref
