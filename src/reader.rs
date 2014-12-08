@@ -251,7 +251,7 @@ pub trait MessageReader : Reader {
                     }),
                     Some(typ) => match self.read_tag() {
                         Err(ioe) => Err(ioe),
-                        Ok(tag) => Ok(Header(sz, typ, tag))
+                        Ok(tag) => Ok(Header(sz-4, typ, tag))
                     }
                 }
             }
