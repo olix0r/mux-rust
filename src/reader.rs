@@ -1,7 +1,7 @@
 use std::io::{IoResult, IoError, Reader, BufReader, InvalidInput};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{types, Header, Framed, Tag, Message,
+use proto::{types, Header, Frame, Tag, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -11,6 +11,19 @@ use proto::{types, Header, Framed, Tag, Message,
             Rerr};
 
 struct TraceId(u64, u64, u64);
+
+trait Detailed {
+    fn detail(&self, d: &str) -> Self;
+}
+impl Detailed for IoError {
+    fn detail(&self, d: &str) -> IoError {
+        IoError {
+            kind: self.kind,
+            desc: self.desc,
+            detail: Some(d.to_string()),
+        }
+    }
+}
 
 pub trait MessageReader : Reader {
 
@@ -32,7 +45,7 @@ pub trait MessageReader : Reader {
 
     fn read_len_buf(&mut self) -> IoResult<Vec<u8>> {
         match self.read_be_u16() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in buf)")),
             Ok(len) => self.read_exact(len as uint)
         }
     }
@@ -43,7 +56,7 @@ pub trait MessageReader : Reader {
             Ok(buf) => String::from_utf8(buf).map_err(|_| -> IoError {
                 IoError {
                     kind: InvalidInput,
-                    desc: "invalid string",
+                    desc: "not a utf8 string",
                     detail: None,
                 }
             })
@@ -52,9 +65,9 @@ pub trait MessageReader : Reader {
 
     fn read_mux_context(&mut self) -> IoResult<Context> {
         match self.read_len_buf() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in context: length)")),
             Ok(key) => match self.read_len_buf() {
-                Err(ioe) => Err(ioe),
+                Err(ioe) => Err(ioe.detail("(in context: content)")),
                 Ok(val) => Ok(Context { key: key, val: val })
             }
         }
@@ -62,7 +75,7 @@ pub trait MessageReader : Reader {
 
     fn read_mux_contexts(&mut self) -> IoResult<Vec<Context>> {
         match self.read_be_u16() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in contexts)")),
             Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
                 r.read_mux_context()
             })
@@ -71,9 +84,9 @@ pub trait MessageReader : Reader {
 
     fn read_mux_dentry(&mut self) -> IoResult<Dentry> {
         match self.read_len_string() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in dentry)")),
             Ok(src) => match self.read_len_string() {
-                Err(ioe) => Err(ioe),
+                Err(ioe) => Err(ioe.detail("(in dentry)")),
                 Ok(tree) => Ok(Dentry { src: src, tree: tree })
             }
         }
@@ -81,7 +94,7 @@ pub trait MessageReader : Reader {
 
     fn read_mux_dtab(&mut self) -> IoResult<Dtab> {
         match self.read_be_u16() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in dtab)")),
             Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Dentry> {
                 r.read_mux_dentry()
             }).map(|dentries| -> Dtab { Dtab(dentries) })
@@ -90,33 +103,46 @@ pub trait MessageReader : Reader {
 
     fn read_mux_tag(&mut self) -> IoResult<Tag> {
         match self.read_u8() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in tag)")),
             Ok(a) => match self.read_u8() {
-                Err(ioe) => Err(ioe),
-                Ok(b) => self.read_u8().map(|c| -> Tag { Tag(a, b, c) })
+                Err(ioe) => Err(ioe.detail("(in tag)")),
+                Ok(b) => match self.read_u8() {
+                    Err(ioe) => Err(ioe.detail("(in tag)")),
+                    Ok(c) => Ok(Tag(a, b, c))
+                }
             }
         }
     }
 
     fn read_mux_trace(&mut self) -> IoResult<Option<Trace>> {
         match self.read_u8() {
-            Err(ioe) => Err(ioe),
+            Err(ioe) => Err(ioe.detail("(in trace: nkeys)")),
             Ok(nkeys) => {
                 let mut curr_trace: Option<TraceId> = None;
                 let mut curr_flags: u8 = 0;
 
                 for _ in range(0, nkeys) {
                     match self.read_u8() {
-                        Err(ioe) => return Err(ioe),
+                        Err(ioe) =>
+                            return Err(ioe.detail("(in trace: key)")),
+
                         Ok(key) => match self.read_u8() {
-                            Err(ioe) => return Err(ioe),
+                            Err(ioe) =>
+                                return Err(ioe.detail("(in trace)")),
+
                             Ok(vsize) => match (key, vsize) {
                                 (1, 24) => match self.read_be_u64() {
-                                    Err(ioe) => return Err(ioe),
+                                    Err(ioe) =>
+                                        return Err(ioe.detail("(in trace)")),
+
                                     Ok(span_id) => match self.read_be_u64() {
-                                        Err(ioe) => return Err(ioe),
+                                        Err(ioe) =>
+                                            return Err(ioe.detail("(in trace)")),
+
                                         Ok(parent_id) => match self.read_be_u64() {
-                                            Err(ioe) => return Err(ioe),
+                                            Err(ioe) =>
+                                                return Err(ioe.detail("(in trace)")),
+
                                             Ok(trace_id) => {
                                                 let id = TraceId(span_id, parent_id, trace_id);
                                                 curr_trace = Some(id)
@@ -124,8 +150,10 @@ pub trait MessageReader : Reader {
                                         }
                                     }
                                 },
+
                                 (2, vsize) => match self.read_exact(vsize as uint) {
-                                    Err(ioe) => return Err(ioe),
+                                    Err(ioe) => return Err(ioe.detail("(in trace)")),
+
                                     Ok(bytes) => match bytes.last() {
                                         // let the error be handled by a subsequent read...
                                         None => (),
@@ -134,6 +162,7 @@ pub trait MessageReader : Reader {
                                         }
                                     }
                                 },
+
                                 (status, vsize) => return Err(IoError {
                                     kind: InvalidInput,
                                     desc: "unknown key",
@@ -160,9 +189,12 @@ pub trait MessageReader : Reader {
     fn read_mux_treq(&mut self) -> IoResult<Message> {
         match self.read_mux_trace() {
             Err(ioe) => Err(ioe),
-            Ok(trace) => self.read_to_end().map(|bytes| -> Message {
-                Treq(trace, bytes)
-            })
+
+            Ok(trace) => match self.read_to_end() {
+                Err(ioe) => Err(ioe.detail("(in treq: body)")),
+
+                Ok(bytes) => Ok(Treq(trace, bytes))
+            }
         }
     }
 
@@ -183,12 +215,16 @@ pub trait MessageReader : Reader {
     fn read_mux_tdispatch(&mut self) -> IoResult<Message> {
         match self.read_mux_contexts() {
             Err(ioe) => Err(ioe),
+
             Ok(contexts) => match self.read_len_string() {
                 Err(ioe) => Err(ioe),
+
                 Ok(dst) => match self.read_mux_dtab() {
                     Err(ioe) => Err(ioe),
+
                     Ok(dtab) => match self.read_to_end() {
                         Err(ioe) => Err(ioe),
+
                         Ok(body) => Ok(Tdispatch(contexts, dst, dtab, body)),
                     }
                 }
@@ -280,15 +316,15 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_mux_frame(&mut self) -> IoResult<Framed> {
+    fn read_mux_frame(&mut self) -> IoResult<Frame> {
         match self.read_mux_header() {
             Err(ioe) => Err(ioe),
             Ok(Header(len, msg_type, tag)) => match self.read_exact(len as uint) {
                 Err(ioe) => Err(ioe),
                 Ok(body) => {
                     let mut buf = BufReader::new(body.as_slice());
-                    buf.read_mux_message(msg_type).map(|msg| -> Framed {
-                        Framed(tag, msg)
+                    buf.read_mux_message(msg_type).map(|msg| -> Frame {
+                        Frame(tag, msg)
                     })
                 }
             }

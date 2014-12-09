@@ -45,6 +45,7 @@ fn main() {
             loop {
                 match rx.steal() {
                     Empty | Abort => (),
+
                     Data(mut conn) => {
                         println!("-- {}: connected: {}", id, conn.peer_name());
                         //conn.set_read_timeout(Some(50));
@@ -52,7 +53,7 @@ fn main() {
 
                         loop {
                             //println!("-- {}: reading", id);
-                            let Framed(tag, req) = match conn.read_mux_frame() {
+                            let Frame(tag, req) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -85,8 +86,8 @@ fn main() {
                                 },
                                 Ok(_) => ()
                             };
-
                             //println!("{}: wrote: {}", id, rsp)
+
                             ctr.fetch_add(1, SeqCst);
                         }
 

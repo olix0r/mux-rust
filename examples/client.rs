@@ -64,7 +64,7 @@ fn main() {
                             };
                             //println!("{}: wrote: {}", id, tmsg);
 
-                            let Framed(_, _) = match conn.read_mux_frame() {
+                            let Frame(_, _) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -73,6 +73,7 @@ fn main() {
                                 Ok(framed) => framed
                             };
                             //println!("{}: read: {}", id, msg);
+
                             ctr.fetch_add(1, SeqCst);
                         }
 

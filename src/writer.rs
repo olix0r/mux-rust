@@ -1,7 +1,7 @@
 use std::io::{IoResult, Writer, MemWriter};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{Header, Tag, Message,
+use proto::{Header, Frame, Tag, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -10,16 +10,22 @@ use proto::{Header, Tag, Message,
             Tlease,
             Rerr};
 
+/// Extends a writer to write mux messages.
 pub trait MessageWriter : Writer {
 
-    fn write_mux_frame(&mut self, tag: Tag, msg: &Message) -> IoResult<()> {
+    fn write_mux_frame(&mut self, frame: &Frame) -> IoResult<()> {
+        let Frame(tag, ref msg) = *frame;
+
+        // Buffer the frame (so that we know its size). We can introduce size hints later if the
+        // copy is too expensive.
         let mut buf = MemWriter::new();
         match buf.write_mux_message(msg) {
             Err(ioe) => Err(ioe),
             Ok(_) => {
                 let vec = buf.unwrap();
                 let bytes = vec.as_slice();
-                match self.write_mux_header(Header(4 + bytes.len() as u32, msg.get_type(), tag)) {
+                let hdr = Header(4 + bytes.len() as u32, msg.get_type(), tag);
+                match self.write_mux_header(hdr) {
                     Err(ioe) => Err(ioe),
                     Ok(_) => self.write(bytes)
                 }
@@ -155,11 +161,14 @@ pub trait MessageWriter : Writer {
     fn write_mux_trace(&mut self, trace: Option<Trace>) -> IoResult<()> {
         match trace {
             None => self.write_u8(0),
-            Some(trace) => match self.write_u8(2) {
+
+            Some(trace) => match self.write_u8(2) { // two trace variables:
                 Err(ioe) => Err(ioe),
+
+                // var 0: trace id
                 Ok(_) => match self.write_u8(0) {
                     Err(ioe) => Err(ioe),
-                    Ok(_) => match self.write_u8(24) {
+                    Ok(_) => match self.write_u8(24) { // 3 u64 ids:
                         Err(ioe) => Err(ioe),
                         Ok(_) => match self.write_be_u64(trace.span_id) {
                             Err(ioe) => Err(ioe),
@@ -167,6 +176,8 @@ pub trait MessageWriter : Writer {
                                 Err(ioe) => Err(ioe),
                                 Ok(_) => match self.write_be_u64(trace.trace_id) {
                                     Err(ioe) => Err(ioe),
+
+                                    // var 1: flags
                                     Ok(_) => self.write([1, 1, trace.flags])
                                 }
                             }
@@ -184,24 +195,24 @@ impl<W: Writer> MessageWriter for W {}
 #[cfg(test)]
 mod test {
     use std::io::MemWriter;
-    use proto::{Message, Tdiscarded, Tag};
+    use proto::{Frame, Message, Tdiscarded, Tag};
     use super::MessageWriter;
 
-    fn encode_framed(tag: Tag, m: &Message) -> Vec<u8> {
+    fn encode_frame(tag: Tag, m: Message) -> Vec<u8> {
         let mut w = MemWriter::new();
-        w.write_mux_frame(tag, m).ok();
+        w.write_mux_frame(&Frame(tag, m)).ok();
         w.unwrap()
     }
 
     #[test]
     fn test_discarded() {
-        let vec = encode_framed(Tag(0, 0, 0), &Tdiscarded(Tag(0, 1, 2), "BAD".to_string()));
+        let vec = encode_frame(Tag(0, 0, 0), Tdiscarded(Tag(0, 1, 2), "BAD".to_string()));
         assert_eq!(vec, vec![
             00, 00, 00, 10, // size
             66, // type
             0, 0, 0, // marker tag
             0, 1, 2, // tag ref
             66, 65, 68, // msg: BAD
-            ])
+            ]);
     }
 }

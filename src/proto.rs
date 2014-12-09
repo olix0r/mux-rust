@@ -49,13 +49,19 @@ pub mod types {
             match code {
                 TREQ => Some(Treq),
                 RREQ => Some(Rreq),
+
                 TDISPATCH => Some(Tdispatch),
                 RDISPATCH => Some(Rdispatch),
+
                 TPING => Some(Tping),
                 RPING => Some(Rping),
+
                 TDISCARDED => Some(Tdiscarded),
+
                 TLEASE => Some(Tlease),
+
                 RERR => Some(Rerr),
+
                 _ => None
             }
         }
@@ -118,7 +124,7 @@ impl Message {
     }
 }
 
-pub struct Framed(pub Tag, pub Message);
+pub struct Frame(pub Tag, pub Message);
 
 #[cfg(test)]
 mod test {
