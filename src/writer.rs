@@ -1,7 +1,7 @@
-use std::io::{IoResult, Writer, MemWriter};
+use std::io::{IoResult, Writer};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{Header, Frame, Tag, Message,
+use proto::{Tag, Message,
             Treq, RreqOk, RreqError, RreqNack,
             Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
             Tdrain, Rdrain,
@@ -10,36 +10,14 @@ use proto::{Header, Frame, Tag, Message,
             Tlease,
             Rerr};
 
-/// Extends a writer to write mux messages.
-pub trait MessageWriter : Writer {
+pub trait MuxWriter : Writer {
 
-    fn write_mux_frame(&mut self, frame: &Frame) -> IoResult<()> {
-        let Frame(tag, ref msg) = *frame;
-
-        // Buffer the frame (so that we know its size). We can introduce size hints later if the
-        // copy is too expensive.
-        let mut buf = MemWriter::new();
-        match buf.write_mux_message(msg) {
+    fn write_mux(&mut self, tag: Tag, msg: Message) -> IoResult<()> {
+         match self.write_i8(msg.get_type() as i8) {
             Err(ioe) => Err(ioe),
-            Ok(_) => {
-                let vec = buf.unwrap();
-                let bytes = vec.as_slice();
-                let hdr = Header(4 + bytes.len() as u32, msg.get_type(), tag);
-                match self.write_mux_header(hdr) {
-                    Err(ioe) => Err(ioe),
-                    Ok(_) => self.write(bytes)
-                }
-            }
-        }
-    }
-
-    fn write_mux_header(&mut self, hdr: Header) -> IoResult<()> {
-        let Header(len, typ, tag) = hdr;
-        match self.write_be_u32(len) {
-            Err(ioe) => Err(ioe),
-            Ok(_) => match self.write_i8(typ as i8) {
+            Ok(_) => match self.write_mux_tag(tag) {
                 Err(ioe) => Err(ioe),
-                Ok(_) => self.write_mux_tag(tag)
+                Ok(_) => self.write_mux_message(&msg)
             }
         }
     }
@@ -64,10 +42,13 @@ pub trait MessageWriter : Writer {
             &Tdispatch(ref contexts, ref dst, ref dtab, ref body) =>
                 match self.write_mux_contexts(contexts.as_slice()) {
                     Err(ioe) => Err(ioe),
+
                     Ok(_) => match self.write_len_str(dst.as_slice()) {
                         Err(ioe) => Err(ioe),
+
                         Ok(_) => match self.write_mux_dtab(dtab) {
                             Err(ioe) => Err(ioe),
+
                             Ok(_) => self.write(body.as_slice())
                         }
                     }
@@ -190,18 +171,33 @@ pub trait MessageWriter : Writer {
 
 }
 
-impl<W: Writer> MessageWriter for W {}
+impl<W: Writer> MuxWriter for W {}
+
+pub trait FrameWriter: Writer {
+    fn write_be_u32_frame(&mut self, frame: &[u8]) -> IoResult<()> {
+        match self.write_be_u32(frame.len() as u32) {
+            Err(ioe) => Err(ioe),
+            Ok(_) => self.write(frame)
+        }
+    }
+}
+
+impl<W: Writer> FrameWriter for W {}
 
 #[cfg(test)]
 mod test {
     use std::io::MemWriter;
-    use proto::{Frame, Message, Tdiscarded, Tag};
-    use super::MessageWriter;
+    use proto::{Message, Tdiscarded, Tag};
+    use super::{MuxWriter, FrameWriter};
 
-    fn encode_frame(tag: Tag, m: Message) -> Vec<u8> {
-        let mut w = MemWriter::new();
-        w.write_mux_frame(&Frame(tag, m)).ok();
-        w.unwrap()
+    fn encode_frame(tag: Tag, msg: Message) -> Vec<u8> {
+        let (mut frame, mut out) = (MemWriter::new(), MemWriter::new());
+
+        frame.write_mux(tag, msg).ok();
+        let vec = frame.unwrap();
+
+        out.write_be_u32_frame(vec.as_slice()).unwrap();
+        out.unwrap()
     }
 
     #[test]

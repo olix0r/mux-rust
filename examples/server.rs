@@ -12,8 +12,8 @@ use std::sync::deque::{BufferPool, Empty, Abort, Data};
 use std::time::Duration;
 
 use mux::proto::*;
-use mux::reader::MessageReader;
-use mux::writer::MessageWriter;
+use mux::reader::MuxReader;
+use mux::writer::MuxWriter;
 
 fn main() {
     let mut listener = TcpListener::bind("0.0.0.0", 6666).unwrap();
@@ -53,7 +53,7 @@ fn main() {
 
                         loop {
                             //println!("-- {}: reading", id);
-                            let Frame(tag, req) = match conn.read_mux_frame() {
+                            let (tag, req) = match conn.read_mux() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -72,7 +72,7 @@ fn main() {
                             };
 
                             //println!("{}: writing: {}", id, rsp);
-                            match conn.write_mux_frame(tag, &rsp) {
+                            match conn.write_mux(tag, rsp) {
                                 Err(ioe) => {
                                     println!("{}: write error: {}", id, ioe);
                                     break;
