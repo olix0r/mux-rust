@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUint, SeqCst};
 use std::time::Duration;
 
-use mux::misc::Dtab;
+use mux::misc::*;
 use mux::proto::*;
-use mux::reader::MessageReader;
-use mux::writer::MessageWriter;
+use mux::reader::MuxReader;
+use mux::writer::MuxWriter;
+
 
 fn main() {
     let counter_arc = Arc::new(AtomicUint::new(0));
@@ -30,12 +31,16 @@ fn main() {
         }
     });
 
-    for id in range(0u, 1) {
+    for id in range(0u, 3) {
         let ctr = counter_arc.clone();
         //let bytes_ctr = bytes_arc.clone();
 
-        let tmsg = Tdispatch(Vec::new(), String::new(), Dtab(Vec::new()),
-                             b"nope".to_vec());
+        let tmsg = Tdispatch(
+            Vec::new(),
+            "/path".to_string(),
+            Dtab(vec![
+                Dentry::new("/from".to_string(), "/to".to_string())]),
+            b"nope".to_vec());
 
         spawn(proc() {
             loop {
@@ -48,7 +53,7 @@ fn main() {
 
                         loop {
                             //println!("{}: writing: {}", id, tmsg)
-                            match conn.write_mux_frame(Tag(1,2,3), &tmsg) {
+                            match conn.write_mux_frame(Tag(1,2,3), tmsg.clone()) {
                                 Err(ioe) => {
                                     println!("{}: write error: {}", id, ioe);
                                     break;
@@ -64,7 +69,7 @@ fn main() {
                             };
                             //println!("{}: wrote: {}", id, tmsg);
 
-                            let Framed(_, _) = match conn.read_mux_frame() {
+                            let (_, _) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -73,6 +78,7 @@ fn main() {
                                 Ok(framed) => framed
                             };
                             //println!("{}: read: {}", id, msg);
+
                             ctr.fetch_add(1, SeqCst);
                         }
 

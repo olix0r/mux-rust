@@ -49,21 +49,24 @@ pub mod types {
             match code {
                 TREQ => Some(Treq),
                 RREQ => Some(Rreq),
+
                 TDISPATCH => Some(Tdispatch),
                 RDISPATCH => Some(Rdispatch),
+
                 TPING => Some(Tping),
                 RPING => Some(Rping),
+
                 TDISCARDED => Some(Tdiscarded),
+
                 TLEASE => Some(Tlease),
+
                 RERR => Some(Rerr),
+
                 _ => None
             }
         }
     }
 }
-
-#[deriving(Clone,PartialEq,Eq,Show)]
-pub struct Header(pub u32, pub types::Message, pub Tag);
 
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub enum Message {
@@ -118,30 +121,24 @@ impl Message {
     }
 }
 
-pub struct Framed(pub Tag, pub Message);
-
 #[cfg(test)]
 mod test {
     use misc::{Context, Dentry, Dtab};
-    use reader::MessageReader;
-    use writer::MessageWriter;
+    use reader::MuxReader;
+    use writer::MuxWriter;
     use super::{types, Message, Tag, Treq, Tdispatch, Tdrain, Tping, Tdiscarded, Tlease};
     use std::io::{Reader, BufReader, MemWriter};
 
     fn assert_encode(msg: &Message) -> Vec<u8> {
         let mut writer = MemWriter::new();
-        match writer.write_mux_message(msg) {
-            Err(ioe) => fail!("write error: {}", ioe),
-            Ok(_) => writer.unwrap()
-        }
+        writer.write_mux_message(msg).unwrap();
+        writer.unwrap()
+
     }
 
     fn assert_decode(t: types::Message, bytes: Vec<u8>) -> Message {
         let mut reader = BufReader::new(bytes.as_slice());
-        match reader.read_mux_message(t) {
-            Err(ioe) => fail!("read error: {}", ioe),
-            Ok(decoded) => decoded
-        }
+        reader.read_mux_message(t).unwrap()
     }
 
     fn assert_decode_encoded(len: uint, msg: &Message) {

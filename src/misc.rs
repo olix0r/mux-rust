@@ -1,3 +1,5 @@
+use std::io::IoError;
+
 #[deriving(Clone,PartialEq,Eq,Show)]
 pub struct Dentry { pub src: String, pub tree: String }
 impl Dentry {
@@ -28,3 +30,16 @@ pub struct Trace {
     pub flags: u8,
 }
 
+pub trait Detailed {
+    fn detail(&self, d: &str) -> Self;
+}
+
+impl Detailed for IoError {
+    fn detail(&self, d: &str) -> IoError {
+        IoError {
+            kind: self.kind,
+            desc: self.desc,
+            detail: Some(d.to_string()),
+        }
+    }
+}
