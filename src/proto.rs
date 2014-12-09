@@ -130,7 +130,7 @@ mod test {
 
     fn assert_encode(msg: &Message) -> Vec<u8> {
         let mut writer = MemWriter::new();
-        match writer.write_message_body(msg) {
+        match writer.write_mux_message(msg) {
             Err(ioe) => fail!("write error: {}", ioe),
             Ok(_) => writer.unwrap()
         }
@@ -138,7 +138,7 @@ mod test {
 
     fn assert_decode(t: types::Message, bytes: Vec<u8>) -> Message {
         let mut reader = BufReader::new(bytes.as_slice());
-        match reader.read_message_body(t) {
+        match reader.read_mux_message(t) {
             Err(ioe) => fail!("read error: {}", ioe),
             Ok(decoded) => decoded
         }

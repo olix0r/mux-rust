@@ -50,7 +50,7 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_context(&mut self) -> IoResult<Context> {
+    fn read_mux_context(&mut self) -> IoResult<Context> {
         match self.read_len_buf() {
             Err(ioe) => Err(ioe),
             Ok(key) => match self.read_len_buf() {
@@ -60,16 +60,16 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_contexts(&mut self) -> IoResult<Vec<Context>> {
+    fn read_mux_contexts(&mut self) -> IoResult<Vec<Context>> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe),
             Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
-                r.read_context()
+                r.read_mux_context()
             })
         }
     }
 
-    fn read_dentry(&mut self) -> IoResult<Dentry> {
+    fn read_mux_dentry(&mut self) -> IoResult<Dentry> {
         match self.read_len_string() {
             Err(ioe) => Err(ioe),
             Ok(src) => match self.read_len_string() {
@@ -79,16 +79,16 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_dtab(&mut self) -> IoResult<Dtab> {
+    fn read_mux_dtab(&mut self) -> IoResult<Dtab> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe),
             Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Dentry> {
-                r.read_dentry()
+                r.read_mux_dentry()
             }).map(|dentries| -> Dtab { Dtab(dentries) })
         }
     }
 
-    fn read_tag(&mut self) -> IoResult<Tag> {
+    fn read_mux_tag(&mut self) -> IoResult<Tag> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
             Ok(a) => match self.read_u8() {
@@ -98,7 +98,7 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_trace(&mut self) -> IoResult<Option<Trace>> {
+    fn read_mux_trace(&mut self) -> IoResult<Option<Trace>> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
             Ok(nkeys) => {
@@ -157,8 +157,8 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_treq(&mut self) -> IoResult<Message> {
-        match self.read_trace() {
+    fn read_mux_treq(&mut self) -> IoResult<Message> {
+        match self.read_mux_trace() {
             Err(ioe) => Err(ioe),
             Ok(trace) => self.read_to_end().map(|bytes| -> Message {
                 Treq(trace, bytes)
@@ -166,7 +166,7 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_rreq(&mut self) -> IoResult<Message> {
+    fn read_mux_rreq(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
             Ok(0) => self.read_to_end().map(|buf| -> Message { RreqOk(buf) }),
@@ -180,12 +180,12 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_tdispatch(&mut self) -> IoResult<Message> {
-        match self.read_contexts() {
+    fn read_mux_tdispatch(&mut self) -> IoResult<Message> {
+        match self.read_mux_contexts() {
             Err(ioe) => Err(ioe),
             Ok(contexts) => match self.read_len_string() {
                 Err(ioe) => Err(ioe),
-                Ok(dst) => match self.read_dtab() {
+                Ok(dst) => match self.read_mux_dtab() {
                     Err(ioe) => Err(ioe),
                     Ok(dtab) => match self.read_to_end() {
                         Err(ioe) => Err(ioe),
@@ -196,10 +196,10 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_rdispatch(&mut self) -> IoResult<Message> {
+    fn read_mux_rdispatch(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
-            Ok(status) => match self.read_contexts() {
+            Ok(status) => match self.read_mux_contexts() {
                 Err(ioe) => Err(ioe),
                 Ok(contexts) => match status {
                     0 => match self.read_to_end() {
@@ -224,21 +224,21 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_tdiscarded(&mut self) -> IoResult<Message> {
-        match self.read_tag() {
+    fn read_mux_tdiscarded(&mut self) -> IoResult<Message> {
+        match self.read_mux_tag() {
             Err(ioe) => Err(ioe),
             Ok(which) => self.read_to_string().map(|msg| -> Message { Tdiscarded(which, msg) })
         }
     }
 
-    fn read_tlease(&mut self) -> IoResult<Message> {
+    fn read_mux_tlease(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
             Ok(unit) => self.read_be_u64().map(|val| -> Message { Tlease(unit, val) })
         }
     }
 
-    fn read_header(&mut self) -> IoResult<Header> {
+    fn read_mux_header(&mut self) -> IoResult<Header> {
         match self.read_be_u32() {
             Err(ioe) => Err(ioe),
             Ok(sz) => match self.read_i8() {
@@ -249,7 +249,7 @@ pub trait MessageReader : Reader {
                         desc: "unknown message type",
                         detail: Some(format!("{}", type_code)),
                     }),
-                    Some(typ) => match self.read_tag() {
+                    Some(typ) => match self.read_mux_tag() {
                         Err(ioe) => Err(ioe),
                         Ok(tag) => Ok(Header(sz-4, typ, tag))
                     }
@@ -258,13 +258,13 @@ pub trait MessageReader : Reader {
         }
     }
 
-    fn read_message_body(&mut self, msg_type: types::Message) -> IoResult<Message> {
+    fn read_mux_message(&mut self, msg_type: types::Message) -> IoResult<Message> {
         match msg_type {
-            types::Treq => self.read_treq(),
-            types::Rreq => self.read_rreq(),
+            types::Treq => self.read_mux_treq(),
+            types::Rreq => self.read_mux_rreq(),
 
-            types::Tdispatch => self.read_tdispatch(),
-            types::Rdispatch => self.read_rdispatch(),
+            types::Tdispatch => self.read_mux_tdispatch(),
+            types::Rdispatch => self.read_mux_rdispatch(),
 
             types::Tdrain => Ok(Tdrain),
             types::Rdrain => Ok(Rdrain),
@@ -272,22 +272,22 @@ pub trait MessageReader : Reader {
             types::Tping => Ok(Tping),
             types::Rping => Ok(Rping),
 
-            types::Tdiscarded => self.read_tdiscarded(),
+            types::Tdiscarded => self.read_mux_tdiscarded(),
 
-            types::Tlease => self.read_tlease(),
+            types::Tlease => self.read_mux_tlease(),
 
             types::Rerr => self.read_to_string().map(|msg| -> Message { Rerr(msg) }),
         }
     }
 
-    fn read_framed(&mut self) -> IoResult<Framed> {
-        match self.read_header() {
+    fn read_mux_frame(&mut self) -> IoResult<Framed> {
+        match self.read_mux_header() {
             Err(ioe) => Err(ioe),
             Ok(Header(len, msg_type, tag)) => match self.read_exact(len as uint) {
                 Err(ioe) => Err(ioe),
                 Ok(body) => {
                     let mut buf = BufReader::new(body.as_slice());
-                    buf.read_message_body(msg_type).map(|msg| -> Framed {
+                    buf.read_mux_message(msg_type).map(|msg| -> Framed {
                         Framed(tag, msg)
                     })
                 }
@@ -320,7 +320,7 @@ mod test {
 
     #[test]
     fn test_tag() {
-        match mk_reader([23, 45, 77, 88]).read_tag() {
+        match mk_reader([23, 45, 77, 88]).read_mux_tag() {
             Err(ioe) => fail!("read error: {}", ioe),
             Ok(tag) => assert_eq!(tag, Tag(23, 45, 77))
         }

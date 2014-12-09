@@ -35,7 +35,7 @@ fn main() {
         //let bytes_ctr = bytes_arc.clone();
 
         let tmsg = Tdispatch(Vec::new(), String::new(), Dtab(Vec::new()),
-                             b"fuck your rules".to_vec());
+                             b"nope".to_vec());
 
         spawn(proc() {
             loop {
@@ -48,7 +48,7 @@ fn main() {
 
                         loop {
                             //println!("{}: writing: {}", id, tmsg)
-                            match conn.write_framed(Tag(1,2,3), &tmsg) {
+                            match conn.write_mux_frame(Tag(1,2,3), &tmsg) {
                                 Err(ioe) => {
                                     println!("{}: write error: {}", id, ioe);
                                     break;
@@ -62,9 +62,9 @@ fn main() {
                                 },
                                 Ok(_) => ()
                             };
-                            println!("{}: wrote: {}", id, tmsg);
+                            //println!("{}: wrote: {}", id, tmsg);
 
-                            let Framed(_, msg) = match conn.read_framed() {
+                            let Framed(_, _) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -72,7 +72,7 @@ fn main() {
 
                                 Ok(framed) => framed
                             };
-                            println!("{}: read: {}", id, msg);
+                            //println!("{}: read: {}", id, msg);
                             ctr.fetch_add(1, SeqCst);
                         }
 

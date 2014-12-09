@@ -52,7 +52,7 @@ fn main() {
 
                         loop {
                             //println!("-- {}: reading", id);
-                            let Framed(tag, req) = match conn.read_framed() {
+                            let Framed(tag, req) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;
@@ -60,7 +60,7 @@ fn main() {
 
                                 Ok(framed) => framed,
                             };
-                            println!("{}: read: {}", id, req);
+                            //println!("{}: read: {}", id, req);
 
                             let rsp = match req {
                                 Treq(_, body) => RreqOk(body),
@@ -71,7 +71,7 @@ fn main() {
                             };
 
                             //println!("{}: writing: {}", id, rsp);
-                            match conn.write_framed(tag, &rsp) {
+                            match conn.write_mux_frame(tag, &rsp) {
                                 Err(ioe) => {
                                     println!("{}: write error: {}", id, ioe);
                                     break;
@@ -86,7 +86,7 @@ fn main() {
                                 Ok(_) => ()
                             };
 
-                            println!("{}: wrote: {}", id, rsp)
+                            //println!("{}: wrote: {}", id, rsp)
                             ctr.fetch_add(1, SeqCst);
                         }
 
