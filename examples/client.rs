@@ -53,7 +53,7 @@ fn main() {
 
                         loop {
                             //println!("{}: writing: {}", id, tmsg)
-                            match conn.write_mux(Tag(1,2,3), tmsg.clone()) {
+                            match conn.write_mux_frame(Tag(1,2,3), tmsg.clone()) {
                                 Err(ioe) => {
                                     println!("{}: write error: {}", id, ioe);
                                     break;
@@ -69,7 +69,7 @@ fn main() {
                             };
                             //println!("{}: wrote: {}", id, tmsg);
 
-                            let (_, _) = match conn.read_mux() {
+                            let (_, _) = match conn.read_mux_frame() {
                                 Err(ioe) => {
                                     println!("{}: read error: {}", id, ioe);
                                     break;

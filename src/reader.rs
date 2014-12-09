@@ -1,4 +1,4 @@
-use std::io::{IoResult, IoError, Reader, InvalidInput};
+use std::io::{IoResult, IoError, Reader, InvalidInput, BufReader};
 
 use misc::{Context, Dtab, Dentry, Trace, Detailed};
 use proto::{types, Tag, Message,
@@ -15,15 +15,32 @@ struct TraceId(u64, u64, u64);
 pub trait FrameReader: Reader {
     fn read_be_u32_frame(&mut self) -> IoResult<Vec<u8>> {
         match self.read_be_u32() {
-            Err(ioe) => Err(ioe),
-            Ok(sz) => self.read_exact(sz as uint)
+            Err(ioe) => Err(ioe.detail("frame size")),
+            Ok(sz) => match self.read_exact(sz as uint) {
+                Err(ioe) => Err(ioe.detail("frame body")),
+                ok => ok
+            }
         }
     }
 }
 
 impl<R: Reader> FrameReader for R {}
 
-pub trait MuxReader : Reader {
+pub trait MuxReader: FrameReader {
+
+    fn read_mux_frame(&mut self) -> IoResult<(Tag, Message)> {
+        match self.read_be_u32_frame() {
+            Err(ioe) => Err(ioe),
+            Ok(bytes) => {
+                println!("read frame: {}",
+                         bytes.iter().fold(String::new(), |s,&b| -> String {
+                             format!("{}{:02x}", s, b)
+                         }));
+                let mut buf = BufReader::new(bytes.as_slice());
+                buf.read_mux()
+            },
+        }
+    }
 
     fn read_mux(&mut self) -> IoResult<(Tag, Message)> {
         match self.read_i8() {
@@ -36,12 +53,19 @@ pub trait MuxReader : Reader {
                     detail: Some(format!("{}", typ)),
                 }),
 
-                Some(typ) => match self.read_mux_tag() {
-                    Err(ioe) => Err(ioe),
+                Some(typ) => {
+                    println!("reading {}", typ);
 
-                    Ok(tag) => match self.read_mux_message(typ) {
+                    match self.read_mux_tag() {
                         Err(ioe) => Err(ioe),
-                        Ok(msg) => Ok((tag, msg))
+
+                        Ok(tag) => {
+                            println!("read tag: {}", tag);
+                            match self.read_mux_message(typ) {
+                                Err(ioe) => Err(ioe),
+                                Ok(msg) => Ok((tag, msg))
+                            }
+                        }
                     }
                 }
             }
@@ -119,9 +143,12 @@ pub trait MuxReader : Reader {
     fn read_mux_contexts(&mut self) -> IoResult<Vec<Context>> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe.detail("in contexts")),
-            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
-                r.read_mux_context()
-            })
+            Ok(len) => {
+                println!("reading {} ({}) contexts", len, len as uint);
+                self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
+                    r.read_mux_context()
+                })
+            }
         }
     }
 
@@ -278,26 +305,29 @@ pub trait MuxReader : Reader {
     fn read_mux_rdispatch(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
-            Ok(status) => match self.read_mux_contexts() {
-                Err(ioe) => Err(ioe),
-                Ok(contexts) => match status {
-                    0 => match self.read_to_end() {
-                        Err(ioe) => Err(ioe),
-                        Ok(body) => Ok(RdispatchOk(contexts, body)),
-                    },
+            Ok(status) => {
+                println!("reading rdispatch {}", status);
+                match self.read_mux_contexts() {
+                    Err(ioe) => Err(ioe),
+                    Ok(contexts) => match status {
+                        0 => match self.read_to_end() {
+                            Err(ioe) => Err(ioe),
+                            Ok(body) => Ok(RdispatchOk(contexts, body)),
+                        },
 
-                    1 => match self.read_to_string() {
-                        Err(ioe) => Err(ioe),
-                        Ok(desc) => Ok(RdispatchError(contexts, desc)),
-                    },
+                        1 => match self.read_to_string() {
+                            Err(ioe) => Err(ioe),
+                            Ok(desc) => Ok(RdispatchError(contexts, desc)),
+                        },
 
-                    2 => Ok(RdispatchNack(contexts)),
+                        2 => Ok(RdispatchNack(contexts)),
 
-                    _ => Err(IoError {
-                        kind: InvalidInput,
-                        desc: "unknown rdispatch status",
-                        detail: None,
-                    })
+                        _ => Err(IoError {
+                            kind: InvalidInput,
+                            desc: "unknown rdispatch status",
+                            detail: None,
+                        })
+                    }
                 }
             }
         }
@@ -321,7 +351,6 @@ pub trait MuxReader : Reader {
 
 impl<R: Reader> MuxReader for R {}
 
-
 #[cfg(test)]
 mod test {
     extern crate test;
@@ -342,10 +371,19 @@ mod test {
 
     #[test]
     fn test_tag() {
-        match mk_reader([23, 45, 77, 88]).read_mux_tag() {
-            Err(ioe) => fail!("read error: {}", ioe),
-            Ok(tag) => assert_eq!(tag, Tag(23, 45, 77))
-        }
+        let bytes = [23, 45, 77, 88];
+        let mut r = BufReader::new(bytes);
+        assert_eq!(r.read_mux_tag().unwrap(), Tag(23, 45, 77));
+        assert_eq!(r.read_u8().unwrap(), 88);
+    }
+
+    #[test]
+    fn test_contexts() {
+        let bytes = [0x00, 0x00, // contexts
+                     0x6e, 0x6f, 0x70, 0x65]; // "nope""
+        let mut r = BufReader::new(bytes);
+        assert_eq!(r.read_mux_contexts().unwrap(), vec![]);
+        assert_eq!(r.read_u8().unwrap(), 0x6e);
     }
 
     #[test]

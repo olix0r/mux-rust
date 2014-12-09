@@ -4,7 +4,7 @@ extern crate mux;
 use std::io::{Reader, Writer, BufReader, MemWriter};
 
 use mux::misc::{Context, Dentry, Dtab};
-use mux::proto::{types, Message, Tdispatch, Tag};
+use mux::proto::{types, Message, Tdispatch, Tag, RdispatchOk};
 use mux::reader::*;
 use mux::writer::*;
 
@@ -51,16 +51,11 @@ static TDISPATCH_BUF: &'static [u8] = [
 static TAG: Tag = Tag(4, 7, 9);
 
 fn read_frame<R: Reader>(reader: &mut R) -> (Tag, Message) {
-    let bytes = reader.read_be_u32_frame().unwrap();
-    let mut buf = BufReader::new(bytes.as_slice());
-    buf.read_mux().unwrap()
+    reader.read_mux_frame().unwrap()
 }
 
-fn write_frame<W: Writer>(writer: &mut W, msg: Message) {
-    let mut buf = MemWriter::new();
-    buf.write_mux(TAG, msg.clone()).ok();
-    let vec = buf.unwrap();
-    writer.write_be_u32_frame(vec.as_slice()).unwrap();
+fn write_frame<W: Writer>(writer: &mut W, tag: Tag, msg: Message) {
+    writer.write_mux_frame(tag, msg.clone()).ok();
 }
 
 #[test]
@@ -84,9 +79,9 @@ fn codec_tdispatch() {
 
     /* writer */ {
         let mut writer = MemWriter::new();
-        write_frame(&mut writer, msg.clone());
-        write_frame(&mut writer, msg.clone());
-        write_frame(&mut writer, msg.clone());
+        write_frame(&mut writer, TAG, msg.clone());
+        write_frame(&mut writer, TAG, msg.clone());
+        write_frame(&mut writer, TAG, msg.clone());
         let buf = writer.unwrap();
 
         let mut reader = BufReader::new(buf.as_slice());
@@ -95,4 +90,38 @@ fn codec_tdispatch() {
         assert_eq!(read_frame(&mut reader), (TAG, msg.clone()));
     }
 
+}
+
+#[test]
+fn codec_rdispatch() {
+    let msg = RdispatchOk(Vec::new(), b"nope".to_vec());
+    let tag = Tag(1, 2, 3);
+
+    let mut writer = MemWriter::new();
+    write_frame(&mut writer, tag, msg.clone());
+    let bytes = writer.unwrap();
+    let expected = vec![
+        0x00, 0x00, 0x00, 0x0b, // frame
+        0xfe, // msg type: rdispatch (-2)
+        0x01, 0x02, 0x03, // tag
+        0x00, // status
+        0x00, 0x00, // contexts
+        0x6e, 0x6f, 0x70, 0x65 // "nope""
+        ];
+    assert_eq!(bytes, expected);
+
+    {
+        let mut reader = BufReader::new(bytes.as_slice().slice_from(8));
+        assert_eq!(reader.read_mux_contexts().unwrap(), vec![]);
+    }
+
+    {
+        let mut reader = BufReader::new(bytes.as_slice().slice_from(4));
+        assert_eq!(reader.read_mux().unwrap(), (tag, msg.clone()));
+    }
+
+    {
+        let mut reader = BufReader::new(bytes.as_slice());
+        assert_eq!(read_frame(&mut reader), (tag, msg.clone()));
+    }
 }
