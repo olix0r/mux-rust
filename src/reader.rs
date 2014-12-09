@@ -32,10 +32,10 @@ pub trait MuxReader: FrameReader {
         match self.read_be_u32_frame() {
             Err(ioe) => Err(ioe),
             Ok(bytes) => {
-                println!("read frame: {}",
-                         bytes.iter().fold(String::new(), |s,&b| -> String {
-                             format!("{}{:02x}", s, b)
-                         }));
+                // println!("read frame: {}",
+                //          bytes.iter().fold(String::new(), |s,&b| -> String {
+                //              format!("{}{:02x}", s, b)
+                //          }));
                 let mut buf = BufReader::new(bytes.as_slice());
                 buf.read_mux()
             },
@@ -53,19 +53,12 @@ pub trait MuxReader: FrameReader {
                     detail: Some(format!("{}", typ)),
                 }),
 
-                Some(typ) => {
-                    println!("reading {}", typ);
+                Some(typ) => match self.read_mux_tag() {
+                    Err(ioe) => Err(ioe),
 
-                    match self.read_mux_tag() {
+                    Ok(tag) => match self.read_mux_message(typ) {
                         Err(ioe) => Err(ioe),
-
-                        Ok(tag) => {
-                            println!("read tag: {}", tag);
-                            match self.read_mux_message(typ) {
-                                Err(ioe) => Err(ioe),
-                                Ok(msg) => Ok((tag, msg))
-                            }
-                        }
+                        Ok(msg) => Ok((tag, msg))
                     }
                 }
             }
@@ -143,12 +136,9 @@ pub trait MuxReader: FrameReader {
     fn read_mux_contexts(&mut self) -> IoResult<Vec<Context>> {
         match self.read_be_u16() {
             Err(ioe) => Err(ioe.detail("in contexts")),
-            Ok(len) => {
-                println!("reading {} ({}) contexts", len, len as uint);
-                self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
-                    r.read_mux_context()
-                })
-            }
+            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
+                r.read_mux_context()
+            })
         }
     }
 
@@ -305,29 +295,26 @@ pub trait MuxReader: FrameReader {
     fn read_mux_rdispatch(&mut self) -> IoResult<Message> {
         match self.read_u8() {
             Err(ioe) => Err(ioe),
-            Ok(status) => {
-                println!("reading rdispatch {}", status);
-                match self.read_mux_contexts() {
-                    Err(ioe) => Err(ioe),
-                    Ok(contexts) => match status {
-                        0 => match self.read_to_end() {
-                            Err(ioe) => Err(ioe),
-                            Ok(body) => Ok(RdispatchOk(contexts, body)),
-                        },
+            Ok(status) => match self.read_mux_contexts() {
+                Err(ioe) => Err(ioe),
+                Ok(contexts) => match status {
+                    0 => match self.read_to_end() {
+                        Err(ioe) => Err(ioe),
+                        Ok(body) => Ok(RdispatchOk(contexts, body)),
+                    },
 
-                        1 => match self.read_to_string() {
-                            Err(ioe) => Err(ioe),
-                            Ok(desc) => Ok(RdispatchError(contexts, desc)),
-                        },
+                    1 => match self.read_to_string() {
+                        Err(ioe) => Err(ioe),
+                        Ok(desc) => Ok(RdispatchError(contexts, desc)),
+                    },
 
-                        2 => Ok(RdispatchNack(contexts)),
+                    2 => Ok(RdispatchNack(contexts)),
 
-                        _ => Err(IoError {
-                            kind: InvalidInput,
-                            desc: "unknown rdispatch status",
-                            detail: None,
-                        })
-                    }
+                    _ => Err(IoError {
+                        kind: InvalidInput,
+                        desc: "unknown rdispatch status",
+                        detail: None,
+                    })
                 }
             }
         }

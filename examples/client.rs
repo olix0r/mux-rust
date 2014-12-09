@@ -31,7 +31,7 @@ fn main() {
         }
     });
 
-    for id in range(0u, 1) {
+    for id in range(0u, 3) {
         let ctr = counter_arc.clone();
         //let bytes_ctr = bytes_arc.clone();
 

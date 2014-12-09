@@ -30,10 +30,10 @@ pub trait MuxWriter: FrameWriter {
 
             Ok(_) => {
                 let bytes = buf.unwrap();
-                println!("write frame: {}",
-                         bytes.iter().fold(String::new(), |s,&b| -> String {
-                             format!("{}{:02x}", s, b)
-                         }));
+                // println!("write frame: {}",
+                //          bytes.iter().fold(String::new(), |s,&b| -> String {
+                //              format!("{}{:02x}", s, b)
+                //          }));
                 self.write_be_u32_frame(bytes.as_slice())
             }
         }
@@ -55,7 +55,6 @@ pub trait MuxWriter: FrameWriter {
     }
 
     fn write_mux_message(&mut self, m: &Message) -> IoResult<()> {
-        println!("writing {}", m.get_type());
         match m {
             &Treq(trace, ref body) =>
                 match self.write_mux_trace(trace) {
@@ -154,7 +153,6 @@ pub trait MuxWriter: FrameWriter {
     }
 
     fn write_mux_context(&mut self, context: &Context) -> IoResult<()> {
-        println!("writing context {}", context);
         match self.write_len_buf(context.key.as_slice()) {
             Err(ioe) => Err(ioe),
             Ok(_) => self.write_len_buf(context.val.as_slice())
@@ -162,7 +160,6 @@ pub trait MuxWriter: FrameWriter {
     }
 
     fn write_mux_contexts(&mut self, contexts: &[Context]) -> IoResult<()> {
-        println!("writing {} contexts", contexts.len());
         self.write_len_vec(contexts, |w, ctx| -> IoResult<()> {
             w.write_mux_context(ctx)
         })
