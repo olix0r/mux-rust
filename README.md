@@ -1,8 +1,11 @@
 # mux-rust #
 
+[![Build Status](https://travis-ci.org/olix0r/mux-rust.svg?branch=master)](https://travis-ci.org/olix0r/mux-rust)
+
 An implementation of the [Mux protocol](https://twitter.github.io/finagle/guide/Protocols.html#mux) in Rust.
 
-Currently, this only includes a Reader and Writer for mux messages.
+This library includes a Reader and Writer for mux messages.  Due to the nature
+of the Rust language, these APIs are extremely unstable and likely to change.
 
 ## Building ##
 
@@ -12,28 +15,24 @@ Use [cargo](https://crates.io/install):
 
 ## Running examples ##
 
+Build example server and client:
+
     $ cargo test
     ...
-    $ target/examples/server 
+
+Run a thread-per-connection server:
+
+    $ target/examples/server
     serving on 0.0.0.0:6666
-    0 rps
-    0 rps
-    -- 1: connected: Ok(127.0.0.1:56624)
-    -- 0: connected: Ok(127.0.0.1:56625)
-    -- 2: connected: Ok(127.0.0.1:56626)
-    5875 rps
-    16329 rps
+    -- 127.0.0.1:50047: connected
+    5730 rps
+    8627 rps
+
+Run a single-threaded client:
 
     $ target/example/client
-    :; target/examples/client 
+    -- 127.0.0.1:6666: connected: 127.0.0.1:50047
     0 rps
-    -- 0: connected: Ok(127.0.0.1:6666)
-    -- 1: connected: Ok(127.0.0.1:6666)
-    -- 2: connected: Ok(127.0.0.1:6666)
-    17128 rps
-    16152 rps
+    8520 rps
+    7994 rps
 
-
-## Todo ##
-
-* Attach to a client and server.
