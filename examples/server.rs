@@ -17,18 +17,21 @@ use mux::writer::MuxWriter;
 
 #[allow(unstable)]
 fn main() {
-    let ctr = Arc::new(AtomicUint::new(0));
+    let ctr_arc = Arc::new(AtomicUint::new(0));
 
     // log rps periodically:
-    let read_ctr = ctr.clone();
+    let read_ctr = ctr_arc.clone();
     Thread::spawn(move|| {
         let mut timer = Timer::new().unwrap();
         let mut last: usize = 0;
         loop {
             let current = read_ctr.load(Ordering::SeqCst);
-            println!("{} rps", (current - last) / 2);
-            last = current;
-            timer.sleep(Duration::seconds(2));
+            let delta = (current - last) / 60;
+            if delta > 0 {
+                println!("{} rps", delta);
+                last = current;
+            }
+            timer.sleep(Duration::seconds(60));
         }
     });
 
@@ -41,49 +44,52 @@ fn main() {
         match conn {
             Err(_) => (),
             Ok(mut conn) => {
-                let id = format!("{}", conn.peer_name().unwrap());
-                println!("-- {}: connected", id);
-                //conn.set_read_timeout(Some(50));
-                //conn.set_write_timeout(Some(50));
+                let ctr = ctr_arc.clone();
+                Thread::spawn(move|| {
+                    let id = format!("{}", conn.peer_name().unwrap());
+                    println!("-- {}: connected", id);
+                    //conn.set_read_timeout(Some(50));
+                    //conn.set_write_timeout(Some(50));
 
-                loop {
-                    let (tag, req) = match conn.read_mux_frame() {
-                        Err(ioe) => {
-                            println!("{}: read error: {}", id, ioe);
-                            break;
-                        },
-                        Ok(framed) => framed,
-                    };
+                    loop {
+                        let (tag, req) = match conn.read_mux_frame() {
+                            Err(ioe) => {
+                                println!("{}: read error: {}", id, ioe);
+                                break;
+                            },
+                            Ok(framed) => framed,
+                        };
 
-                    let rsp = match req {
-                        Msg::Treq(_, body) => Msg::RreqOk(body),
-                        Msg::Tdispatch(ctxs, _, _, body) => Msg::RdispatchOk(ctxs, body),
-                        Msg::Tdrain => Msg::Rdrain,
-                        Msg::Tping => Msg::Rping,
-                        _ => Msg::Rerr("idk man".to_string()),
-                    };
+                        let rsp = match req {
+                            Msg::Treq(_, body) => Msg::RreqOk(body),
+                            Msg::Tdispatch(ctxs, _, _, body) => Msg::RdispatchOk(ctxs, body),
+                            Msg::Tdrain => Msg::Rdrain,
+                            Msg::Tping => Msg::Rping,
+                            _ => Msg::Rerr("idk man".to_string()),
+                        };
 
-                    match conn.write_mux_frame(&tag, &rsp) {
-                        Err(ioe) => {
-                            println!("{}: write error: {}", id, ioe);
-                            break;
-                        },
-                        Ok(_) => ()
-                    };
-                    match conn.flush() {
-                        Err(ioe) => {
-                            println!("{}: flush error: {}", id, ioe);
-                            break;
-                        },
-                        Ok(_) => ()
-                    };
+                        match conn.write_mux_frame(&tag, &rsp) {
+                            Err(ioe) => {
+                                println!("{}: write error: {}", id, ioe);
+                                break;
+                            },
+                            Ok(_) => ()
+                        };
+                        match conn.flush() {
+                            Err(ioe) => {
+                                println!("{}: flush error: {}", id, ioe);
+                                break;
+                            },
+                            Ok(_) => ()
+                        };
 
-                    ctr.fetch_add(1, Ordering::SeqCst);
-                }
+                        ctr.fetch_add(1, Ordering::SeqCst);
+                    }
 
-                conn.close_read().ok();
-                conn.close_write().ok();
-                println!("-- {}: disconnected", id);
+                    conn.close_read().ok();
+                    conn.close_write().ok();
+                    println!("-- {}: disconnected", id);
+                });
             }
         }
     }
