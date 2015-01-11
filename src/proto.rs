@@ -1,75 +1,92 @@
 use misc::{Context, Dtab, Trace};
 
-#[deriving(Clone,PartialEq,Eq,Show)]
+#[derive(Clone,PartialEq,Eq,Show,Copy)]
 pub struct Tag(pub u8, pub u8, pub u8);
+
 pub static MARKER_TAG: Tag = Tag(0,0,0);
 
-pub mod types {
-    pub static TREQ: i8 =  1;
-    pub static RREQ: i8 = -1;
+mod types {
+    pub const TREQ: i8 =  1;
+    pub const RREQ: i8 = -1;
 
-    pub static TDISPATCH: i8 =  2;
-    pub static RDISPATCH: i8 = -2;
+    pub const TDISPATCH: i8 =  2;
+    pub const RDISPATCH: i8 = -2;
 
-    pub static TDRAIN: i8 =  64;
-    pub static RDRAIN: i8 = -64;
+    pub const TDRAIN: i8 =  64;
+    pub const RDRAIN: i8 = -64;
 
-    pub static TPING: i8 =  65;
-    pub static RPING: i8 = -65;
+    pub const TPING: i8 =  65;
+    pub const RPING: i8 = -65;
 
-    pub static TDISCARDED: i8 = 66;
+    pub const TDISCARDED: i8 = 66;
 
-    pub static TLEASE: i8 = 67;
+    pub const TLEASE: i8 = 67;
 
-    pub static RERR: i8 = -128;
+    pub const RERR: i8 = -128;
+}
 
-    #[deriving(Clone,PartialEq,Eq,Show)]
-    pub enum Message {
-        Treq = TREQ as int,
-        Rreq = RREQ as int,
 
-        Tdispatch = TDISPATCH as int,
-        Rdispatch = RDISPATCH as int,
+#[derive(Clone,Eq,PartialEq,Show)]
+pub enum MsgType {
+    Treq, Rreq,
+    Tdispatch, Rdispatch,
+    Tdrain, Rdrain,
+    Tping, Rping,
+    Tdiscarded,
+    Tlease,
+    Rerr,
+}
 
-        Tdrain = TDRAIN as int,
-        Rdrain = RDRAIN as int,
+impl MsgType {
+    pub fn from_i8(code: i8) -> Option<MsgType> {
+        match code {
+            types::TREQ => Some(MsgType::Treq),
+            types::RREQ => Some(MsgType::Rreq),
 
-        Tping = TPING as int,
-        Rping = RPING as int,
+            types::TDISPATCH => Some(MsgType::Tdispatch),
+            types::RDISPATCH => Some(MsgType::Rdispatch),
 
-        Tdiscarded = TDISCARDED as int,
+            types::TDRAIN => Some(MsgType::Tdrain),
+            types::RDRAIN => Some(MsgType::Rdrain),
 
-        Tlease = TLEASE as int,
+            types::TPING => Some(MsgType::Tping),
+            types::RPING => Some(MsgType::Rping),
 
-        Rerr = RERR as int,
+            types::TDISCARDED => Some(MsgType::Tdiscarded),
+
+            types::TLEASE => Some(MsgType::Tlease),
+
+            types::RERR => Some(MsgType::Rerr),
+
+            _ => None
+        }
     }
 
-    impl Message {
-        pub fn from_i8(code: i8) -> Option<Message> {
-            match code {
-                TREQ => Some(Treq),
-                RREQ => Some(Rreq),
+    pub fn to_i8(self) -> i8 {
+        match self {
+            MsgType::Treq => types::TREQ,
+            MsgType::Rreq => types::RREQ,
 
-                TDISPATCH => Some(Tdispatch),
-                RDISPATCH => Some(Rdispatch),
+            MsgType::Tdispatch => types::TDISPATCH,
+            MsgType::Rdispatch => types::RDISPATCH,
 
-                TPING => Some(Tping),
-                RPING => Some(Rping),
+            MsgType::Tping => types::TPING,
+            MsgType::Rping => types::RPING,
 
-                TDISCARDED => Some(Tdiscarded),
+            MsgType::Tdrain => types::TDRAIN,
+            MsgType::Rdrain => types::RDRAIN,
 
-                TLEASE => Some(Tlease),
+            MsgType::Tdiscarded => types::TDISCARDED,
 
-                RERR => Some(Rerr),
+            MsgType::Tlease => types::TLEASE,
 
-                _ => None
-            }
+            MsgType::Rerr => types::RERR,
         }
     }
 }
 
-#[deriving(Clone,PartialEq,Eq,Show)]
-pub enum Message {
+#[derive(Clone,Eq,PartialEq,Show)]
+pub enum Msg {
     Treq(Option<Trace>, Vec<u8>),
     RreqOk(Vec<u8>),
     RreqError(String),
@@ -93,30 +110,30 @@ pub enum Message {
     Rerr(String),
 }
 
-impl Message {
-    pub fn get_type(&self) -> types::Message {
+impl Msg {
+    pub fn get_type(&self) -> MsgType {
         match self {
-            &Treq(_, _) => types::Treq,
-            &RreqOk(_) => types::Rreq,
-            &RreqError(_) => types::Rreq,
-            &RreqNack => types::Rreq,
+            &Msg::Treq(_, _)   => MsgType::Treq,
+            &Msg::RreqOk(_)    => MsgType::Rreq,
+            &Msg::RreqError(_) => MsgType::Rreq,
+            &Msg::RreqNack     => MsgType::Rreq,
 
-            &Tdispatch(_, _, _, _) => types::Tdispatch,
-            &RdispatchOk(_, _) => types::Rdispatch,
-            &RdispatchError(_, _) => types::Rdispatch,
-            &RdispatchNack(_) => types::Rdispatch,
+            &Msg::Tdispatch(_, _, _, _) => MsgType::Tdispatch,
+            &Msg::RdispatchOk(_, _)     => MsgType::Rdispatch,
+            &Msg::RdispatchError(_, _)  => MsgType::Rdispatch,
+            &Msg::RdispatchNack(_)      => MsgType::Rdispatch,
 
-            &Tdrain => types::Tdrain,
-            &Rdrain => types::Rdrain,
+            &Msg::Tdrain => MsgType::Tdrain,
+            &Msg::Rdrain => MsgType::Rdrain,
 
-            &Tping => types::Tping,
-            &Rping => types::Rping,
+            &Msg::Tping => MsgType::Tping,
+            &Msg::Rping => MsgType::Rping,
 
-            &Tdiscarded(_, _) => types::Tdiscarded,
+            &Msg::Tdiscarded(_, _) => MsgType::Tdiscarded,
 
-            &Tlease(_, _) => types::Tlease,
+            &Msg::Tlease(_, _) => MsgType::Tlease,
 
-            &Rerr(_) => types::Rerr,
+            &Msg::Rerr(_) => MsgType::Rerr,
         }
     }
 }
@@ -124,24 +141,23 @@ impl Message {
 #[cfg(test)]
 mod test {
     use misc::{Context, Dentry, Dtab};
+    use std::io::{Reader, BufReader, MemWriter};
     use reader::MuxReader;
     use writer::MuxWriter;
-    use super::{types, Message, Tag, Treq, Tdispatch, Tdrain, Tping, Tdiscarded, Tlease};
-    use std::io::{Reader, BufReader, MemWriter};
+    use super::{MsgType, Msg, Tag};
 
-    fn assert_encode(msg: &Message) -> Vec<u8> {
+    fn assert_encode(msg: &Msg) -> Vec<u8> {
         let mut writer = MemWriter::new();
-        writer.write_mux_message(msg).unwrap();
-        writer.unwrap()
-
+        writer.write_mux_msg(msg).unwrap();
+        writer.into_inner()
     }
 
-    fn assert_decode(t: types::Message, bytes: Vec<u8>) -> Message {
+    fn assert_decode(t: MsgType, bytes: Vec<u8>) -> Msg {
         let mut reader = BufReader::new(bytes.as_slice());
-        reader.read_mux_message(t).unwrap()
+        reader.read_mux_msg(t).unwrap()
     }
 
-    fn assert_decode_encoded(len: uint, msg: &Message) {
+    fn assert_decode_encoded(len: usize, msg: &Msg) {
         let bytes = assert_encode(msg);
         assert_eq!(bytes.len(), len);
 
@@ -159,7 +175,7 @@ mod test {
         let body = b"momma";
         sz += 5;
 
-        assert_decode_encoded(sz, &Treq(trace, body.to_vec()));
+        assert_decode_encoded(sz, &Msg::Treq(trace, body.to_vec()));
     }
 
     #[test]
@@ -178,26 +194,26 @@ mod test {
         let body = b"mom".to_vec();
         sz += 3;
 
-        assert_decode_encoded(sz, &Tdispatch(contexts, dst, dtab, body));
+        assert_decode_encoded(sz, &Msg::Tdispatch(contexts, dst, dtab, body));
     }
 
     #[test]
     fn test_decode_tdrain() {
-        assert_decode_encoded(0, &Tdrain);
+        assert_decode_encoded(0, &Msg::Tdrain);
     }
 
     #[test]
     fn test_decode_tping() {
-        assert_decode_encoded(0, &Tping);
+        assert_decode_encoded(0, &Msg::Tping);
     }
 
     #[test]
     fn test_decode_tdiscarded() {
-        assert_decode_encoded(3 + 3, &Tdiscarded(Tag(0,1,0), "msg".to_string()));
+        assert_decode_encoded(3 + 3, &Msg::Tdiscarded(Tag(0,1,0), "msg".to_string()));
     }
 
     #[test]
     fn test_decode_tlease() {
-        assert_decode_encoded(1 + 8, &Tlease(60, 30));
+        assert_decode_encoded(1 + 8, &Msg::Tlease(60, 30));
     }
 }

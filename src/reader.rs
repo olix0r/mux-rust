@@ -1,26 +1,17 @@
+#[allow(unstable)]
+
 use std::io::{IoResult, IoError, Reader, InvalidInput, BufReader};
 
 use misc::{Context, Dtab, Dentry, Trace, Detailed};
-use proto::{types, Tag, Message,
-            Treq, RreqOk, RreqError, RreqNack,
-            Tdispatch, RdispatchOk, RdispatchError, RdispatchNack,
-            Tdrain, Rdrain,
-            Tping, Rping,
-            Tdiscarded,
-            Tlease,
-            Rerr};
+use proto::{Msg, MsgType, Tag};
 
 struct TraceId(u64, u64, u64);
 
 pub trait FrameReader: Reader {
     fn read_be_u32_frame(&mut self) -> IoResult<Vec<u8>> {
-        match self.read_be_u32() {
-            Err(ioe) => Err(ioe.detail("frame size")),
-            Ok(sz) => match self.read_exact(sz as uint) {
-                Err(ioe) => Err(ioe.detail("frame body")),
-                ok => ok
-            }
-        }
+        self.read_be_u32().and_then(|sz| {
+            self.read_exact(sz as usize)
+        })
     }
 }
 
@@ -28,74 +19,60 @@ impl<R: Reader> FrameReader for R {}
 
 pub trait MuxReader: FrameReader {
 
-    fn read_mux_frame(&mut self) -> IoResult<(Tag, Message)> {
-        match self.read_be_u32_frame() {
-            Err(ioe) => Err(ioe),
-            Ok(bytes) => {
-                // println!("read frame: {}",
-                //          bytes.iter().fold(String::new(), |s,&b| -> String {
-                //              format!("{}{:02x}", s, b)
-                //          }));
-                let mut buf = BufReader::new(bytes.as_slice());
-                buf.read_mux()
-            },
-        }
+    fn read_mux_frame(&mut self) -> IoResult<(Tag, Msg)> {
+        self.read_be_u32_frame().and_then(|bytes| {
+            let mut buf = BufReader::new(bytes.as_slice());
+            buf.read_mux()
+        })
     }
 
-    fn read_mux(&mut self) -> IoResult<(Tag, Message)> {
-        match self.read_i8() {
-            Err(ioe) => Err(ioe),
-
-            Ok(typ) => match types::Message::from_i8(typ) {
-                None => Err(IoError {
-                    kind: InvalidInput,
-                    desc: "unknown message type",
-                    detail: Some(format!("{}", typ)),
-                }),
-
-                Some(typ) => match self.read_mux_tag() {
-                    Err(ioe) => Err(ioe),
-
-                    Ok(tag) => match self.read_mux_message(typ) {
-                        Err(ioe) => Err(ioe),
-                        Ok(msg) => Ok((tag, msg))
-                    }
-                }
+    fn read_mux(&mut self) -> IoResult<(Tag, Msg)> {
+        self.read_i8().and_then(move |t| match MsgType::from_i8(t) {
+            None => Err(IoError {
+                kind: InvalidInput,
+                desc: "unknown message type",
+                detail: Some(format!("{}", t)),
+            }),
+            Some(typ) => {
+                self.read_mux_tag().and_then(move |tag| {
+                    self.read_mux_msg(typ).map(move |msg| (tag, msg))
+                })
             }
-        }
+        })
     }
 
-    fn read_mux_message(&mut self, msg_type: types::Message) -> IoResult<Message> {
+    fn read_mux_msg(&mut self, msg_type: MsgType) -> IoResult<Msg> {
         match msg_type {
-            types::Treq => self.read_mux_treq(),
-            types::Rreq => self.read_mux_rreq(),
+            MsgType::Treq => self.read_mux_treq(),
+            MsgType::Rreq => self.read_mux_rreq(),
 
-            types::Tdispatch => self.read_mux_tdispatch(),
-            types::Rdispatch => self.read_mux_rdispatch(),
+            MsgType::Tdispatch => self.read_mux_tdispatch(),
+            MsgType::Rdispatch => self.read_mux_rdispatch(),
 
-            types::Tdrain => Ok(Tdrain),
-            types::Rdrain => Ok(Rdrain),
+            MsgType::Tdrain => Ok(Msg::Tdrain),
+            MsgType::Rdrain => Ok(Msg::Rdrain),
 
-            types::Tping => Ok(Tping),
-            types::Rping => Ok(Rping),
+            MsgType::Tping => Ok(Msg::Tping),
+            MsgType::Rping => Ok(Msg::Rping),
 
-            types::Tdiscarded => self.read_mux_tdiscarded(),
+            MsgType::Tdiscarded => self.read_mux_tdiscarded(),
 
-            types::Tlease => self.read_mux_tlease(),
+            MsgType::Tlease => self.read_mux_tlease(),
 
-            types::Rerr => self.read_to_string().map(|msg| -> Message { Rerr(msg) }),
+            MsgType::Rerr => self.read_to_string().map(|msg| Msg::Rerr(msg)),
         }
     }
 
-    fn read_len_vec<T>(
+    fn read_len_vec<T, F: FnMut(&mut Self, usize) -> IoResult<T>>(
         &mut self,
-        len: uint,
-        f: |&mut Self, uint| -> IoResult<T>
+        len: usize,
+        mut f: F
      ) -> IoResult<Vec<T>> {
         let mut vec = Vec::with_capacity(len);
         for i in range(0, len) {
             match f(self, i) {
                 Err(ioe) => return Err(ioe),
+
                 Ok(t) => vec.push(t),
             }
         }
@@ -104,74 +81,53 @@ pub trait MuxReader: FrameReader {
 
 
     fn read_len_buf(&mut self) -> IoResult<Vec<u8>> {
-        match self.read_be_u16() {
-            Err(ioe) => Err(ioe.detail("in buf")),
-            Ok(len) => self.read_exact(len as uint)
-        }
+        self.read_be_u16().and_then(|len| {
+            self.read_exact(len as usize)
+        })
     }
 
     fn read_len_string(&mut self) -> IoResult<String> {
         match self.read_len_buf() {
             Err(ioe) => Err(ioe),
-            Ok(buf) => String::from_utf8(buf).map_err(|_| -> IoError {
-                IoError {
-                    kind: InvalidInput,
-                    desc: "not a utf8 string",
-                    detail: None,
-                }
+            Ok(buf) => String::from_utf8(buf).map_err(|_| IoError {
+                kind: InvalidInput,
+                desc: "not a utf8 string",
+                detail: None,
             })
         }
     }
 
     fn read_mux_context(&mut self) -> IoResult<Context> {
-        match self.read_len_buf() {
-            Err(ioe) => Err(ioe.detail("in context: key")),
-            Ok(key) => match self.read_len_buf() {
-                Err(ioe) => Err(ioe.detail("in context: val")),
-                Ok(val) => Ok(Context { key: key, val: val })
-            }
-        }
+        self.read_len_buf().and_then(move |key| {
+            self.read_len_buf().map(move |val| Context { key: key, val: val })
+        })
     }
 
     fn read_mux_contexts(&mut self) -> IoResult<Vec<Context>> {
-        match self.read_be_u16() {
-            Err(ioe) => Err(ioe.detail("in contexts")),
-            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Context> {
-                r.read_mux_context()
-            })
-        }
+        self.read_be_u16().and_then(|len| {
+            self.read_len_vec(len as usize, |r, _| r.read_mux_context())
+        })
     }
 
     fn read_mux_dentry(&mut self) -> IoResult<Dentry> {
-        match self.read_len_string() {
-            Err(ioe) => Err(ioe.detail("in dentry")),
-            Ok(src) => match self.read_len_string() {
-                Err(ioe) => Err(ioe.detail("in dentry")),
-                Ok(tree) => Ok(Dentry { src: src, tree: tree })
-            }
-        }
+        self.read_len_string().and_then(move |src| {
+            self.read_len_string().map(move |tree| Dentry { src: src, tree: tree })
+        })
     }
 
     fn read_mux_dtab(&mut self) -> IoResult<Dtab> {
-        match self.read_be_u16() {
-            Err(ioe) => Err(ioe.detail("in dtab")),
-            Ok(len) => self.read_len_vec(len as uint, |r, _| -> IoResult<Dentry> {
-                r.read_mux_dentry()
-            }).map(|dentries| -> Dtab { Dtab(dentries) })
-        }
+        self.read_be_u16().and_then(|len| {
+            self.read_len_vec(len as usize, |r, _| r.read_mux_dentry())
+                .map(|dentries| Dtab(dentries))
+        })
     }
 
     fn read_mux_tag(&mut self) -> IoResult<Tag> {
-        match self.read_u8() {
-            Err(ioe) => Err(ioe.detail("in tag")),
-            Ok(a) => match self.read_u8() {
-                Err(ioe) => Err(ioe.detail("in tag")),
-                Ok(b) => match self.read_u8() {
-                    Err(ioe) => Err(ioe.detail("in tag")),
-                    Ok(c) => Ok(Tag(a, b, c))
-                }
-            }
-        }
+        self.read_u8().and_then(|t0| {
+            self.read_u8().and_then(|t1| {
+                self.read_u8().map(|t2| Tag(t0,t1,t2))
+            })
+        })
     }
 
     fn read_mux_trace(&mut self) -> IoResult<Option<Trace>> {
@@ -211,11 +167,12 @@ pub trait MuxReader: FrameReader {
                                     }
                                 },
 
-                                (2, vsize) => match self.read_exact(vsize as uint) {
+                                (2, vsize) => match self.read_exact(vsize as usize) {
                                     Err(ioe) => return Err(ioe.detail("in trace")),
 
                                     Ok(bytes) => match bytes.last() {
-                                        // let the error be handled by a subsequent read...
+                                        // let the error be handled by
+                                        // a subsequent read...
                                         None => (),
                                         Some(byte) => {
                                             curr_flags = *byte
@@ -233,7 +190,7 @@ pub trait MuxReader: FrameReader {
                     }
                 }
 
-                let trace = curr_trace.map(|TraceId(span, parent, trace)| -> Trace {
+                let trace = curr_trace.map(|TraceId(span, parent, trace)| {
                     Trace {
                         span_id: span,
                         parent_id: parent,
@@ -246,94 +203,63 @@ pub trait MuxReader: FrameReader {
         }
     }
 
-    fn read_mux_treq(&mut self) -> IoResult<Message> {
-        match self.read_mux_trace() {
-            Err(ioe) => Err(ioe),
-
-            Ok(trace) => match self.read_to_end() {
-                Err(ioe) => Err(ioe.detail("(in treq: body)")),
-
-                Ok(bytes) => Ok(Treq(trace, bytes))
-            }
-        }
+    fn read_mux_treq(&mut self) -> IoResult<Msg> {
+        self.read_mux_trace().and_then(move |trace| {
+            self.read_to_end().map(move |bytes| Msg::Treq(trace, bytes))
+        })
     }
 
-    fn read_mux_rreq(&mut self) -> IoResult<Message> {
-        match self.read_u8() {
-            Err(ioe) => Err(ioe),
-            Ok(0) => self.read_to_end().map(|buf| -> Message { RreqOk(buf) }),
-            Ok(1) => self.read_to_string().map(|msg| -> Message { RreqError(msg) }),
-            Ok(2) => Ok(RreqNack),
-            Ok(_) => Err(IoError {
+    fn read_mux_rreq(&mut self) -> IoResult<Msg> {
+        self.read_u8().and_then(|status| match status {
+            0 => self.read_to_end().map(|buf| Msg::RreqOk(buf)),
+            1 => self.read_to_string().map(|msg| Msg::RreqError(msg)),
+            2 => Ok(Msg::RreqNack),
+            _ => Err(IoError {
                 kind: InvalidInput,
                 desc: "unknown rreq status",
                 detail: None,
             })
-        }
+        })
     }
 
-    fn read_mux_tdispatch(&mut self) -> IoResult<Message> {
-        match self.read_mux_contexts() {
-            Err(ioe) => Err(ioe),
-
-            Ok(contexts) => match self.read_len_string() {
-                Err(ioe) => Err(ioe),
-
-                Ok(dst) => match self.read_mux_dtab() {
-                    Err(ioe) => Err(ioe),
-
-                    Ok(dtab) => match self.read_to_end() {
-                        Err(ioe) => Err(ioe),
-
-                        Ok(body) => Ok(Tdispatch(contexts, dst, dtab, body)),
-                    }
-                }
-            }
-        }
+    fn read_mux_tdispatch(&mut self) -> IoResult<Msg> {
+        self.read_mux_contexts().and_then(move |contexts| {
+            self.read_len_string().and_then(move |dst| {
+                self.read_mux_dtab().and_then(move |dtab| {
+                    self.read_to_end().map(move |body| Msg::Tdispatch(contexts, dst, dtab, body))
+                })
+            })
+        })
     }
 
-    fn read_mux_rdispatch(&mut self) -> IoResult<Message> {
-        match self.read_u8() {
-            Err(ioe) => Err(ioe),
-            Ok(status) => match self.read_mux_contexts() {
-                Err(ioe) => Err(ioe),
-                Ok(contexts) => match status {
-                    0 => match self.read_to_end() {
-                        Err(ioe) => Err(ioe),
-                        Ok(body) => Ok(RdispatchOk(contexts, body)),
-                    },
-
-                    1 => match self.read_to_string() {
-                        Err(ioe) => Err(ioe),
-                        Ok(desc) => Ok(RdispatchError(contexts, desc)),
-                    },
-
-                    2 => Ok(RdispatchNack(contexts)),
-
+    fn read_mux_rdispatch(&mut self) -> IoResult<Msg> {
+        self.read_u8().and_then(move |status| {
+            self.read_mux_contexts().and_then(move |contexts| {
+                match status {
+                    0 => self.read_to_end().map(move |body| Msg::RdispatchOk(contexts, body)),
+                    1 => self.read_to_string().map(move |desc| Msg::RdispatchError(contexts, desc)),
+                    2 => Ok(Msg::RdispatchNack(contexts)),
                     _ => Err(IoError {
                         kind: InvalidInput,
                         desc: "unknown rdispatch status",
                         detail: None,
                     })
                 }
-            }
-        }
+            })
+        })
     }
 
-    fn read_mux_tdiscarded(&mut self) -> IoResult<Message> {
-        match self.read_mux_tag() {
-            Err(ioe) => Err(ioe),
-            Ok(which) => self.read_to_string().map(|msg| -> Message { Tdiscarded(which, msg) })
-        }
+    fn read_mux_tdiscarded(&mut self) -> IoResult<Msg> {
+        self.read_mux_tag().and_then(|which| {
+            self.read_to_string().map(move |msg| Msg::Tdiscarded(which, msg))
+        })
     }
 
-    fn read_mux_tlease(&mut self) -> IoResult<Message> {
-        match self.read_u8() {
-            Err(ioe) => Err(ioe),
-            Ok(unit) => self.read_be_u64().map(|val| -> Message { Tlease(unit, val) })
-        }
+    fn read_mux_tlease(&mut self) -> IoResult<Msg> {
+        self.read_u8().and_then(|unit| {
+            self.read_be_u64().map(|val| Msg::Tlease(unit, val))
+        })
     }
-
 }
 
 impl<R: Reader> MuxReader for R {}
@@ -349,17 +275,17 @@ mod test {
 
     fn mk_reader(bytes: &[u8]) -> BufReader { BufReader::new(bytes) }
 
-    fn mk_str_buf(n: uint, s: &str) -> Vec<u8> {
+    fn mk_str_buf(n: usize, s: &str) -> Vec<u8> {
         let mut w = MemWriter::new();
         w.write_be_u16(n as u16).ok();
         w.write_str(s).ok();
-        w.unwrap()
+        w.into_inner()
     }
 
     #[test]
     fn test_tag() {
         let bytes = [23, 45, 77, 88];
-        let mut r = BufReader::new(bytes);
+        let mut r = BufReader::new(&bytes);
         assert_eq!(r.read_mux_tag().unwrap(), Tag(23, 45, 77));
         assert_eq!(r.read_u8().unwrap(), 88);
     }
@@ -368,25 +294,25 @@ mod test {
     fn test_contexts() {
         let bytes = [0x00, 0x00, // contexts
                      0x6e, 0x6f, 0x70, 0x65]; // "nope""
-        let mut r = BufReader::new(bytes);
+        let mut r = BufReader::new(&bytes);
         assert_eq!(r.read_mux_contexts().unwrap(), vec![]);
         assert_eq!(r.read_u8().unwrap(), 0x6e);
     }
 
     #[test]
     fn test_len_buf() {
-        match mk_reader([0, 3, 4, 5, 6, 7]).read_len_buf() {
-            Err(ioe) => fail!("read error: {}", ioe),
+        match mk_reader(&[0, 3, 4, 5, 6, 7]).read_len_buf() {
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(buf) => assert_eq!(buf, vec![4, 5, 6])
         }
 
-        match mk_reader([0, 3, 4, 5]).read_len_buf() {
-            Ok(_) => fail!("did not underflow"),
+        match mk_reader(&[0, 3, 4, 5]).read_len_buf() {
+            Ok(_) => panic!("did not underflow"),
             Err(_) => (),
         }
 
-        match mk_reader([0, 0, 4, 5]).read_len_buf() {
-            Err(ioe) => fail!("read error: {}", ioe),
+        match mk_reader(&[0, 0, 4, 5]).read_len_buf() {
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(buf) => assert_eq!(buf, vec![])
         }
     }
@@ -394,22 +320,22 @@ mod test {
     #[test]
     fn test_len_string() {
         match mk_reader(mk_str_buf(3, "mom").as_slice()).read_len_string() {
-            Err(ioe) => fail!("read error: {}", ioe),
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(s) => assert_eq!(s.as_slice(), "mom")
         }
 
         match mk_reader(mk_str_buf(3, "mo").as_slice()).read_len_string() {
-            Ok(_) => fail!("did not underflow"),
+            Ok(_) => panic!("did not underflow"),
             Err(_) => (),
         }
 
         match mk_reader(mk_str_buf(0, "mom").as_slice()).read_len_string() {
-            Err(ioe) => fail!("read error: {}", ioe),
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(s) => assert_eq!(s.as_slice(), "")
         }
     }
 
-    static VEC_BUF: &'static [u8] = [
+    static VEC_BUF: &'static [u8] = &[
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 1, 0,
         0, 0, 0, 0, 0, 1, 0, 0,
@@ -417,24 +343,22 @@ mod test {
 
     #[test]
     fn test_len_vec() {
-        fn read_u64_vec(n: uint) -> IoResult<Vec<u64>> {
-            mk_reader(VEC_BUF).read_len_vec(n, |r, _| -> IoResult<u64> {
-                r.read_be_u64()
-            })
+        fn read_u64_vec(n: usize) -> IoResult<Vec<u64>> {
+            mk_reader(VEC_BUF).read_len_vec(n, |r, _| r.read_be_u64())
         }
 
         match read_u64_vec(2) {
-            Err(ioe) => fail!("read error: {}", ioe),
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(s) => assert_eq!(s, vec![0, 256])
         }
 
         match read_u64_vec(5) {
-            Ok(_) => fail!("did not underflow"),
+            Ok(_) => panic!("did not underflow"),
             Err(_) => (),
         }
 
         match read_u64_vec(0) {
-            Err(ioe) => fail!("read error: {}", ioe),
+            Err(ioe) => panic!("read error: {}", ioe),
             Ok(s) => assert_eq!(s, vec![])
         }
     }

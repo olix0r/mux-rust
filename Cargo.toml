@@ -1,5 +1,5 @@
 [package]
 
 name = "mux"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Oliver Gould <ver@olix0r.net>"]

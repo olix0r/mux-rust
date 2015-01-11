@@ -1,110 +1,90 @@
-//! Mux echo servre
-#![feature(globs)]
+//! Simplistic mux echo server
+// Only serves one client at a time.  Kinda sucks.  A lot.
 
 extern crate mux;
 
-use std::io::{Acceptor, Listener, Reader};
-use std::io::net::tcp::{TcpListener, TcpStream};
+use std::io::{Acceptor, Listener};
+use std::io::net::tcp::TcpListener;
 use std::io::timer::Timer;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUint, SeqCst};
-use std::sync::deque::{BufferPool, Empty, Abort, Data};
+use std::sync::atomic::{AtomicUint, Ordering};
+use std::thread::Thread;
 use std::time::Duration;
 
 use mux::proto::*;
 use mux::reader::MuxReader;
 use mux::writer::MuxWriter;
 
+#[allow(unstable)]
 fn main() {
-    let mut listener = TcpListener::bind("0.0.0.0", 6666).unwrap();
-    let addr = listener.socket_name().unwrap();
+    let ctr = Arc::new(AtomicUint::new(0));
 
-    let mut acceptor = listener.listen();
-    println!("serving on {}", addr);
-
-    let pool = BufferPool::<TcpStream>::new();
-    let (worker, stealer) = pool.deque();
-
-    let counter_arc = Arc::new(AtomicUint::new(0));
-    let ctr = counter_arc.clone();
-    spawn(proc() {
+    // log rps periodically:
+    let read_ctr = ctr.clone();
+    Thread::spawn(move|| {
         let mut timer = Timer::new().unwrap();
-        let mut last: uint = 0;
+        let mut last: usize = 0;
         loop {
-            let current = ctr.load(SeqCst);
+            let current = read_ctr.load(Ordering::SeqCst);
             println!("{} rps", (current - last) / 2);
             last = current;
             timer.sleep(Duration::seconds(2));
         }
     });
 
-    for id in range(0u, 8) {
-        let ctr = counter_arc.clone();
-        let rx = stealer.clone();
-        spawn(proc() {
-            loop {
-                match rx.steal() {
-                    Empty | Abort => (),
-
-                    Data(mut conn) => {
-                        println!("-- {}: connected: {}", id, conn.peer_name());
-                        //conn.set_read_timeout(Some(50));
-                        //conn.set_write_timeout(Some(50));
-
-                        loop {
-                            //println!("-- {}: reading", id);
-                            let (tag, req) = match conn.read_mux_frame() {
-                                Err(ioe) => {
-                                    println!("{}: read error: {}", id, ioe);
-                                    break;
-                                },
-
-                                Ok(framed) => framed,
-                            };
-                            //println!("{}: read: {}", id, req);
-
-                            let rsp = match req {
-                                Treq(_, body) => RreqOk(body),
-                                Tdispatch(ctxs, _, _, body) => RdispatchOk(ctxs, body),
-                                Tdrain => Rdrain,
-                                Tping => Rping,
-                                _ => Rerr("idk man".to_string()),
-                            };
-
-                            //println!("{}: writing: {}", id, rsp);
-                            match conn.write_mux_frame(tag, rsp) {
-                                Err(ioe) => {
-                                    println!("{}: write error: {}", id, ioe);
-                                    break;
-                                },
-                                Ok(_) => ()
-                            };
-                            match conn.flush() {
-                                Err(ioe) => {
-                                    println!("{}: flush error: {}", id, ioe);
-                                    break;
-                                },
-                                Ok(_) => ()
-                            };
-                            //println!("{}: wrote: {}", id, rsp)
-
-                            ctr.fetch_add(1, SeqCst);
-                        }
-
-                        conn.close_read().ok();
-                        conn.close_write().ok();
-                        println!("-- {}: disconnected", id);
-                    }
-                }
-            }
-        });
-    }
+    let addr = "0.0.0.0:6666";
+    let listener = TcpListener::bind(addr).unwrap();
+    let mut acceptor = listener.listen();
+    println!("serving on {}", addr);
 
     for conn in acceptor.incoming() {
         match conn {
             Err(_) => (),
+            Ok(mut conn) => {
+                let id = format!("{}", conn.peer_name().unwrap());
+                println!("-- {}: connected", id);
+                //conn.set_read_timeout(Some(50));
+                //conn.set_write_timeout(Some(50));
 
-            Ok(stream) => worker.push(stream)
+                loop {
+                    let (tag, req) = match conn.read_mux_frame() {
+                        Err(ioe) => {
+                            println!("{}: read error: {}", id, ioe);
+                            break;
+                        },
+                        Ok(framed) => framed,
+                    };
+
+                    let rsp = match req {
+                        Msg::Treq(_, body) => Msg::RreqOk(body),
+                        Msg::Tdispatch(ctxs, _, _, body) => Msg::RdispatchOk(ctxs, body),
+                        Msg::Tdrain => Msg::Rdrain,
+                        Msg::Tping => Msg::Rping,
+                        _ => Msg::Rerr("idk man".to_string()),
+                    };
+
+                    match conn.write_mux_frame(&tag, &rsp) {
+                        Err(ioe) => {
+                            println!("{}: write error: {}", id, ioe);
+                            break;
+                        },
+                        Ok(_) => ()
+                    };
+                    match conn.flush() {
+                        Err(ioe) => {
+                            println!("{}: flush error: {}", id, ioe);
+                            break;
+                        },
+                        Ok(_) => ()
+                    };
+
+                    ctr.fetch_add(1, Ordering::SeqCst);
+                }
+
+                conn.close_read().ok();
+                conn.close_write().ok();
+                println!("-- {}: disconnected", id);
+            }
         }
     }
 }
