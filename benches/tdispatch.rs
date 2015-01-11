@@ -2,7 +2,7 @@ extern crate test;
 extern crate mux;
 
 use mux::misc::{Context, Dentry, Dtab};
-use mux::proto::{types, Message, Tdispatch, Tag};
+use mux::proto::{Tag, Msg, MsgType};
 use mux::reader::MuxReader;
 use mux::writer::MuxWriter;
 use std::io::{BufReader, MemWriter};
@@ -14,14 +14,14 @@ fn read(buf: &[u8]) {
 }
 
 #[inline]
-fn write(tag: Tag, msg: Message) {
+fn write(tag: &Tag, msg: &Msg) {
     MemWriter::new().write_mux_frame(tag, msg).ok();
 }
 
-static TDISPATCH_BUF: &'static [u8] = [
+static TDISPATCH_BUF: &'static [u8] = &[
     0, 0, 0, 0, 0, 0, 0, 65, // frame size
 
-    types::TDISPATCH as u8,
+    2, // type: TDISPATCH
     0, 1, 2, // tag
 
     // contexts:
@@ -65,7 +65,7 @@ fn bench_read_tdispatch(bench: &mut Bencher) {
 
 #[bench]
 fn bench_write_tdispatch(bench: &mut Bencher) {
-    let msg = Tdispatch(
+    let msg = Msg::Tdispatch(
         vec![Context::new(vec![1,2,3,4], vec![6,7]),
              Context::new(vec![3,4], vec![6,7,8])],
         "/BAD".to_string(),
@@ -74,6 +74,6 @@ fn bench_write_tdispatch(bench: &mut Bencher) {
 
     let tag = Tag(4, 7, 9);
 
-    bench.iter(|| write(tag, msg.clone()));
+    bench.iter(|| write(&tag, &msg));
     bench.bytes = TDISPATCH_BUF.len() as u64;
 }
