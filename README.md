@@ -13,6 +13,17 @@ Use [cargo](https://crates.io/install):
 
     $ cargo build
 
+### Building in Docker ###
+
+Build an image with rust-nightly:
+
+    $ docker build -t rust-nightly .
+
+Run tests:
+
+    $ docker run -t -i --rm=true -v $PWD:/src rust-nightly cargo test
+
+
 ## Running examples ##
 
 Build example server and client:
