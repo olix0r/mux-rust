@@ -62,10 +62,10 @@ fn codec_tdispatch() {
         buf.extend(TDISPATCH_BUF.iter().map(|&b| -> u8 { b }));
 
         let mut reader = BufReader::new(buf.as_slice());
-        let (t0, m0) = reader.read_mux_frame_tx().unwrap();
+        let (t0, m0) = reader.read_mux_framed_tmsg().unwrap();
         assert_eq!(t0, TAG);
         assert_eq!(m0, *msg);
-        let (t1, m1) = reader.read_mux_frame_tx().unwrap();
+        let (t1, m1) = reader.read_mux_framed_tmsg().unwrap();
         assert_eq!(t1, TAG);
         assert_eq!(m1, *msg);
     }
@@ -78,15 +78,15 @@ fn codec_tdispatch() {
         let buf = writer.into_inner();
 
         let mut reader = BufReader::new(buf.as_slice());
-        let (t0, m0) = reader.read_mux_frame_tx().unwrap();
+        let (t0, m0) = reader.read_mux_framed_tmsg().unwrap();
         assert_eq!(t0, TAG);
         assert_eq!(m0, *msg);
 
-        let (t1, m1) = reader.read_mux_frame_tx().unwrap();
+        let (t1, m1) = reader.read_mux_framed_tmsg().unwrap();
         assert_eq!(t1, TAG);
         assert_eq!(m1, *msg);
 
-        let (t2, m2) = reader.read_mux_frame_tx().unwrap();
+        let (t2, m2) = reader.read_mux_framed_tmsg().unwrap();
         assert_eq!(t2, TAG);
         assert_eq!(m2, *msg);
     }
@@ -118,14 +118,14 @@ fn codec_rdispatch() {
 
     {
         let mut reader = BufReader::new(bytes.as_slice().slice_from(4));
-        let (t, m) = reader.read_mux_rx().unwrap();
+        let (t, m) = reader.read_mux_rmsg().unwrap();
         assert_eq!(t, tag);
         assert_eq!(m, *msg);
     }
 
     {
         let mut reader = BufReader::new(bytes.as_slice());
-        let (t, m) = reader.read_mux_frame_rx().unwrap();
+        let (t, m) = reader.read_mux_framed_rmsg().unwrap();
         assert_eq!(t, tag);
         assert_eq!(m, *msg);
     }

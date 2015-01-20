@@ -161,7 +161,7 @@ mod test {
 
     fn assert_decode(t: MsgType, bytes: Vec<u8>) -> Tmsg {
         let mut reader = BufReader::new(bytes.as_slice());
-        reader.read_mux_tmsg(t).unwrap()
+        reader.read_mux_tmsg_msg(t).unwrap()
     }
 
     fn assert_decode_encoded(len: usize, msg: &Tmsg) {

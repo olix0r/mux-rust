@@ -50,7 +50,7 @@ fn main() {
                     //conn.set_write_timeout(Some(50));
 
                     loop {
-                        let (tag, req) = match conn.read_mux_frame_tx() {
+                        let (tag, req) = match conn.read_mux_framed_tmsg() {
                             Err(ioe) => {
                                 println!("{}: read error: {}", id, ioe);
                                 break;

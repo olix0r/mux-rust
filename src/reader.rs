@@ -19,21 +19,21 @@ impl<R: Reader> FrameReader for R {}
 
 pub trait MuxReader: FrameReader {
 
-    fn read_mux_frame_tx(&mut self) -> IoResult<(Tag, Tmsg)> {
+    fn read_mux_framed_tmsg(&mut self) -> IoResult<(Tag, Tmsg)> {
         self.read_be_u32_frame().and_then(|bytes| {
             let mut buf = BufReader::new(bytes.as_slice());
-            buf.read_mux_tx()
+            buf.read_mux_tmsg()
         })
     }
 
-    fn read_mux_frame_rx(&mut self) -> IoResult<(Tag, Rmsg)> {
+    fn read_mux_framed_rmsg(&mut self) -> IoResult<(Tag, Rmsg)> {
         self.read_be_u32_frame().and_then(|bytes| {
             let mut buf = BufReader::new(bytes.as_slice());
-            buf.read_mux_rx()
+            buf.read_mux_rmsg()
         })
     }
 
-    fn read_mux_tx(&mut self) -> IoResult<(Tag, Tmsg)> {
+    fn read_mux_tmsg(&mut self) -> IoResult<(Tag, Tmsg)> {
         self.read_i8().and_then(move |t| match MsgType::from_i8(t) {
             None => Err(IoError {
                 kind: InvalidInput,
@@ -42,13 +42,13 @@ pub trait MuxReader: FrameReader {
             }),
             Some(typ) => {
                 self.read_mux_tag().and_then(move |tag| {
-                    self.read_mux_tmsg(typ).map(move |msg| (tag, msg))
+                    self.read_mux_tmsg_msg(typ).map(move |msg| (tag, msg))
                 })
             }
         })
     }
 
-    fn read_mux_rx(&mut self) -> IoResult<(Tag, Rmsg)> {
+    fn read_mux_rmsg(&mut self) -> IoResult<(Tag, Rmsg)> {
         self.read_i8().and_then(move |t| match MsgType::from_i8(t) {
             None => Err(IoError {
                 kind: InvalidInput,
@@ -57,13 +57,13 @@ pub trait MuxReader: FrameReader {
             }),
             Some(typ) => {
                 self.read_mux_tag().and_then(move |tag| {
-                    self.read_mux_rmsg(typ).map(move |msg| (tag, msg))
+                    self.read_mux_rmsg_msg(typ).map(move |msg| (tag, msg))
                 })
             }
         })
     }
 
-    fn read_mux_tmsg(&mut self, msg_type: MsgType) -> IoResult<Tmsg> {
+    fn read_mux_tmsg_msg(&mut self, msg_type: MsgType) -> IoResult<Tmsg> {
         match msg_type {
             MsgType::Treq => self.read_mux_treq(),
 
@@ -85,7 +85,7 @@ pub trait MuxReader: FrameReader {
         }
     }
 
-    fn read_mux_rmsg(&mut self, msg_type: MsgType) -> IoResult<Rmsg> {
+    fn read_mux_rmsg_msg(&mut self, msg_type: MsgType) -> IoResult<Rmsg> {
         match msg_type {
             MsgType::Rreq => self.read_mux_rreq(),
 

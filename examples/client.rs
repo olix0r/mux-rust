@@ -63,7 +63,7 @@ fn main() {
                     };
                     //println!("{}: wrote: {}", id, tmsg);
 
-                    let (_, _) = match conn.read_mux_frame_rx() {
+                    let (_, _) = match conn.read_mux_framed_rmsg() {
                         Err(ioe) => {
                             println!("{}: read error: {}", id, ioe);
                             break;
