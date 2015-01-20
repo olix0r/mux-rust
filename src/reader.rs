@@ -3,7 +3,7 @@
 use std::io::{IoResult, IoError, Reader, InvalidInput, BufReader};
 
 use misc::{Context, Dtab, Dentry, Trace, Detailed};
-use proto::{Msg, MsgType, Tag};
+use proto::{Tmsg, Rmsg, MsgType, Tag};
 
 struct TraceId(u64, u64, u64);
 
@@ -19,14 +19,21 @@ impl<R: Reader> FrameReader for R {}
 
 pub trait MuxReader: FrameReader {
 
-    fn read_mux_frame(&mut self) -> IoResult<(Tag, Msg)> {
+    fn read_mux_frame_tx(&mut self) -> IoResult<(Tag, Tmsg)> {
         self.read_be_u32_frame().and_then(|bytes| {
             let mut buf = BufReader::new(bytes.as_slice());
-            buf.read_mux()
+            buf.read_mux_tx()
         })
     }
 
-    fn read_mux(&mut self) -> IoResult<(Tag, Msg)> {
+    fn read_mux_frame_rx(&mut self) -> IoResult<(Tag, Rmsg)> {
+        self.read_be_u32_frame().and_then(|bytes| {
+            let mut buf = BufReader::new(bytes.as_slice());
+            buf.read_mux_rx()
+        })
+    }
+
+    fn read_mux_tx(&mut self) -> IoResult<(Tag, Tmsg)> {
         self.read_i8().and_then(move |t| match MsgType::from_i8(t) {
             None => Err(IoError {
                 kind: InvalidInput,
@@ -35,31 +42,66 @@ pub trait MuxReader: FrameReader {
             }),
             Some(typ) => {
                 self.read_mux_tag().and_then(move |tag| {
-                    self.read_mux_msg(typ).map(move |msg| (tag, msg))
+                    self.read_mux_tmsg(typ).map(move |msg| (tag, msg))
                 })
             }
         })
     }
 
-    fn read_mux_msg(&mut self, msg_type: MsgType) -> IoResult<Msg> {
+    fn read_mux_rx(&mut self) -> IoResult<(Tag, Rmsg)> {
+        self.read_i8().and_then(move |t| match MsgType::from_i8(t) {
+            None => Err(IoError {
+                kind: InvalidInput,
+                desc: "unknown message type",
+                detail: Some(format!("{}", t)),
+            }),
+            Some(typ) => {
+                self.read_mux_tag().and_then(move |tag| {
+                    self.read_mux_rmsg(typ).map(move |msg| (tag, msg))
+                })
+            }
+        })
+    }
+
+    fn read_mux_tmsg(&mut self, msg_type: MsgType) -> IoResult<Tmsg> {
         match msg_type {
             MsgType::Treq => self.read_mux_treq(),
-            MsgType::Rreq => self.read_mux_rreq(),
 
             MsgType::Tdispatch => self.read_mux_tdispatch(),
-            MsgType::Rdispatch => self.read_mux_rdispatch(),
 
-            MsgType::Tdrain => Ok(Msg::Tdrain),
-            MsgType::Rdrain => Ok(Msg::Rdrain),
+            MsgType::Tdrain => Ok(Tmsg::Drain),
 
-            MsgType::Tping => Ok(Msg::Tping),
-            MsgType::Rping => Ok(Msg::Rping),
+            MsgType::Tping => Ok(Tmsg::Ping),
 
             MsgType::Tdiscarded => self.read_mux_tdiscarded(),
 
             MsgType::Tlease => self.read_mux_tlease(),
 
-            MsgType::Rerr => self.read_to_string().map(|msg| Msg::Rerr(msg)),
+            _ => Err(IoError {
+                kind: InvalidInput,
+                desc: "unknown tx type",
+                detail: None,
+            })
+        }
+    }
+
+    fn read_mux_rmsg(&mut self, msg_type: MsgType) -> IoResult<Rmsg> {
+        match msg_type {
+            MsgType::Rreq => self.read_mux_rreq(),
+
+            MsgType::Rdispatch => self.read_mux_rdispatch(),
+
+            MsgType::Rdrain => Ok(Rmsg::Drain),
+
+            MsgType::Rping => Ok(Rmsg::Ping),
+
+            MsgType::Rerr => self.read_to_string().map(|msg| Rmsg::Err(msg)),
+
+            _ => Err(IoError {
+                kind: InvalidInput,
+                desc: "unknown rx type",
+                detail: None,
+            })
         }
     }
 
@@ -203,17 +245,17 @@ pub trait MuxReader: FrameReader {
         }
     }
 
-    fn read_mux_treq(&mut self) -> IoResult<Msg> {
+    fn read_mux_treq(&mut self) -> IoResult<Tmsg> {
         self.read_mux_trace().and_then(move |trace| {
-            self.read_to_end().map(move |bytes| Msg::Treq(trace, bytes))
+            self.read_to_end().map(move |bytes| Tmsg::Req(trace, bytes))
         })
     }
 
-    fn read_mux_rreq(&mut self) -> IoResult<Msg> {
+    fn read_mux_rreq(&mut self) -> IoResult<Rmsg> {
         self.read_u8().and_then(|status| match status {
-            0 => self.read_to_end().map(|buf| Msg::RreqOk(buf)),
-            1 => self.read_to_string().map(|msg| Msg::RreqError(msg)),
-            2 => Ok(Msg::RreqNack),
+            0 => self.read_to_end().map(|buf| Rmsg::ReqOk(buf)),
+            1 => self.read_to_string().map(|msg| Rmsg::ReqError(msg)),
+            2 => Ok(Rmsg::ReqNack),
             _ => Err(IoError {
                 kind: InvalidInput,
                 desc: "unknown rreq status",
@@ -222,23 +264,23 @@ pub trait MuxReader: FrameReader {
         })
     }
 
-    fn read_mux_tdispatch(&mut self) -> IoResult<Msg> {
+    fn read_mux_tdispatch(&mut self) -> IoResult<Tmsg> {
         self.read_mux_contexts().and_then(move |contexts| {
             self.read_len_string().and_then(move |dst| {
                 self.read_mux_dtab().and_then(move |dtab| {
-                    self.read_to_end().map(move |body| Msg::Tdispatch(contexts, dst, dtab, body))
+                    self.read_to_end().map(move |body| Tmsg::Dispatch(contexts, dst, dtab, body))
                 })
             })
         })
     }
 
-    fn read_mux_rdispatch(&mut self) -> IoResult<Msg> {
+    fn read_mux_rdispatch(&mut self) -> IoResult<Rmsg> {
         self.read_u8().and_then(move |status| {
             self.read_mux_contexts().and_then(move |contexts| {
                 match status {
-                    0 => self.read_to_end().map(move |body| Msg::RdispatchOk(contexts, body)),
-                    1 => self.read_to_string().map(move |desc| Msg::RdispatchError(contexts, desc)),
-                    2 => Ok(Msg::RdispatchNack(contexts)),
+                    0 => self.read_to_end().map(move |body| Rmsg::DispatchOk(contexts, body)),
+                    1 => self.read_to_string().map(move |desc| Rmsg::DispatchError(contexts, desc)),
+                    2 => Ok(Rmsg::DispatchNack(contexts)),
                     _ => Err(IoError {
                         kind: InvalidInput,
                         desc: "unknown rdispatch status",
@@ -249,15 +291,15 @@ pub trait MuxReader: FrameReader {
         })
     }
 
-    fn read_mux_tdiscarded(&mut self) -> IoResult<Msg> {
+    fn read_mux_tdiscarded(&mut self) -> IoResult<Tmsg> {
         self.read_mux_tag().and_then(|which| {
-            self.read_to_string().map(move |msg| Msg::Tdiscarded(which, msg))
+            self.read_to_string().map(move |msg| Tmsg::Discarded(which, msg))
         })
     }
 
-    fn read_mux_tlease(&mut self) -> IoResult<Msg> {
+    fn read_mux_tlease(&mut self) -> IoResult<Tmsg> {
         self.read_u8().and_then(|unit| {
-            self.read_be_u64().map(|val| Msg::Tlease(unit, val))
+            self.read_be_u64().map(|val| Tmsg::Lease(unit, val))
         })
     }
 }

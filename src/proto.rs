@@ -86,54 +86,61 @@ impl MsgType {
 }
 
 #[derive(Clone,Eq,PartialEq,Show)]
-pub enum Msg {
-    Treq(Option<Trace>, Vec<u8>),
-    RreqOk(Vec<u8>),
-    RreqError(String),
-    RreqNack,
-
-    Tdispatch(Vec<Context>, String, Dtab, Vec<u8>),
-    RdispatchOk(Vec<Context>, Vec<u8>),
-    RdispatchError(Vec<Context>, String),
-    RdispatchNack(Vec<Context>),
-
-    Tdrain,
-    Rdrain,
-
-    Tping,
-    Rping,
-
-    Tdiscarded(Tag, String),
-
-    Tlease(u8, u64),
-
-    Rerr(String),
+pub enum Tmsg {
+    Req(Option<Trace>, Vec<u8>),
+    Dispatch(Vec<Context>, String, Dtab, Vec<u8>),
+    Drain,
+    Ping,
+    Discarded(Tag, String),
+    Lease(u8, u64),
 }
 
-impl Msg {
+
+impl Tmsg {
     pub fn get_type(&self) -> MsgType {
         match self {
-            &Msg::Treq(_, _)   => MsgType::Treq,
-            &Msg::RreqOk(_)    => MsgType::Rreq,
-            &Msg::RreqError(_) => MsgType::Rreq,
-            &Msg::RreqNack     => MsgType::Rreq,
+            &Tmsg::Req(_, _)   => MsgType::Treq,
+            &Tmsg::Dispatch(_, _, _, _) => MsgType::Tdispatch,
+            &Tmsg::Drain => MsgType::Tdrain,
+            &Tmsg::Ping => MsgType::Tping,
+            &Tmsg::Discarded(_, _) => MsgType::Tdiscarded,
+            &Tmsg::Lease(_, _) => MsgType::Tlease,
+        }
+    }
+}
 
-            &Msg::Tdispatch(_, _, _, _) => MsgType::Tdispatch,
-            &Msg::RdispatchOk(_, _)     => MsgType::Rdispatch,
-            &Msg::RdispatchError(_, _)  => MsgType::Rdispatch,
-            &Msg::RdispatchNack(_)      => MsgType::Rdispatch,
+#[derive(Clone,Eq,PartialEq,Show)]
+pub enum Rmsg {
+    ReqOk(Vec<u8>),
+    ReqError(String),
+    ReqNack,
 
-            &Msg::Tdrain => MsgType::Tdrain,
-            &Msg::Rdrain => MsgType::Rdrain,
+    DispatchOk(Vec<Context>, Vec<u8>),
+    DispatchError(Vec<Context>, String),
+    DispatchNack(Vec<Context>),
 
-            &Msg::Tping => MsgType::Tping,
-            &Msg::Rping => MsgType::Rping,
+    Drain,
+    Ping,
 
-            &Msg::Tdiscarded(_, _) => MsgType::Tdiscarded,
+    Err(String),
+}
 
-            &Msg::Tlease(_, _) => MsgType::Tlease,
+impl Rmsg {
+    pub fn get_type(&self) -> MsgType {
+        match self {
+            &Rmsg::ReqOk(_)    => MsgType::Rreq,
+            &Rmsg::ReqError(_) => MsgType::Rreq,
+            &Rmsg::ReqNack     => MsgType::Rreq,
 
-            &Msg::Rerr(_) => MsgType::Rerr,
+            &Rmsg::DispatchOk(_, _)     => MsgType::Rdispatch,
+            &Rmsg::DispatchError(_, _)  => MsgType::Rdispatch,
+            &Rmsg::DispatchNack(_)      => MsgType::Rdispatch,
+
+            &Rmsg::Drain => MsgType::Rdrain,
+
+            &Rmsg::Ping => MsgType::Rping,
+
+            &Rmsg::Err(_) => MsgType::Rerr,
         }
     }
 }
@@ -144,20 +151,20 @@ mod test {
     use std::io::{Reader, BufReader, MemWriter};
     use reader::MuxReader;
     use writer::MuxWriter;
-    use super::{MsgType, Msg, Tag};
+    use super::{MsgType, Tmsg, Tag};
 
-    fn assert_encode(msg: &Msg) -> Vec<u8> {
+    fn assert_encode(msg: &Tmsg) -> Vec<u8> {
         let mut writer = MemWriter::new();
-        writer.write_mux_msg(msg).unwrap();
+        writer.write_mux_tmsg_msg(msg).unwrap();
         writer.into_inner()
     }
 
-    fn assert_decode(t: MsgType, bytes: Vec<u8>) -> Msg {
+    fn assert_decode(t: MsgType, bytes: Vec<u8>) -> Tmsg {
         let mut reader = BufReader::new(bytes.as_slice());
-        reader.read_mux_msg(t).unwrap()
+        reader.read_mux_tmsg(t).unwrap()
     }
 
-    fn assert_decode_encoded(len: usize, msg: &Msg) {
+    fn assert_decode_encoded(len: usize, msg: &Tmsg) {
         let bytes = assert_encode(msg);
         assert_eq!(bytes.len(), len);
 
@@ -175,7 +182,7 @@ mod test {
         let body = b"momma";
         sz += 5;
 
-        assert_decode_encoded(sz, &Msg::Treq(trace, body.to_vec()));
+        assert_decode_encoded(sz, &Tmsg::Req(trace, body.to_vec()));
     }
 
     #[test]
@@ -194,26 +201,26 @@ mod test {
         let body = b"mom".to_vec();
         sz += 3;
 
-        assert_decode_encoded(sz, &Msg::Tdispatch(contexts, dst, dtab, body));
+        assert_decode_encoded(sz, &Tmsg::Dispatch(contexts, dst, dtab, body));
     }
 
     #[test]
     fn test_decode_tdrain() {
-        assert_decode_encoded(0, &Msg::Tdrain);
+        assert_decode_encoded(0, &Tmsg::Drain);
     }
 
     #[test]
     fn test_decode_tping() {
-        assert_decode_encoded(0, &Msg::Tping);
+        assert_decode_encoded(0, &Tmsg::Ping);
     }
 
     #[test]
     fn test_decode_tdiscarded() {
-        assert_decode_encoded(3 + 3, &Msg::Tdiscarded(Tag(0,1,0), "msg".to_string()));
+        assert_decode_encoded(3 + 3, &Tmsg::Discarded(Tag(0,1,0), "msg".to_string()));
     }
 
     #[test]
     fn test_decode_tlease() {
-        assert_decode_encoded(1 + 8, &Msg::Tlease(60, 30));
+        assert_decode_encoded(1 + 8, &Tmsg::Lease(60, 30));
     }
 }

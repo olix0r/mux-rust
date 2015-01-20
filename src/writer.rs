@@ -3,7 +3,7 @@
 use std::io::{IoResult, Writer, MemWriter};
 
 use misc::{Context, Dtab, Dentry, Trace};
-use proto::{Tag, Msg};
+use proto::{Tag, Tmsg, Rmsg};
 
 pub trait FrameWriter: Writer {
     fn write_be_u32_frame(&mut self, frame: &[u8]) -> IoResult<()> {
@@ -16,17 +16,30 @@ impl<W: Writer> FrameWriter for W {}
 
 pub trait MuxWriter: FrameWriter {
 
-    fn write_mux_frame<'t>(&mut self, tag: &'t Tag, msg: &'t Msg) -> IoResult<()> {
+    fn write_mux_framed_tmsg<'t>(&mut self, tag: &'t Tag, msg: &'t Tmsg) -> IoResult<()> {
         let mut buf = MemWriter::new();
-        buf.write_mux(tag, msg).and_then(move|_| {
+        buf.write_mux_tmsg(tag, msg).and_then(move|_| {
             self.write_be_u32_frame(buf.into_inner().as_slice())
         })
     }
 
-    fn write_mux<'t>(&mut self, tag: &'t Tag, msg: &'t Msg) -> IoResult<()> {
+    fn write_mux_framed_rmsg<'t>(&mut self, tag: &'t Tag, msg: &'t Rmsg) -> IoResult<()> {
+        let mut buf = MemWriter::new();
+        buf.write_mux_rmsg(tag, msg).and_then(move|_| {
+            self.write_be_u32_frame(buf.into_inner().as_slice())
+        })
+    }
+
+    fn write_mux_tmsg<'t>(&mut self, tag: &'t Tag, msg: &'t Tmsg) -> IoResult<()> {
         self.write_i8(msg.get_type().to_i8())
             .and_then(|_| self.write_mux_tag(tag))
-            .and_then(|_| self.write_mux_msg(msg))
+            .and_then(|_| self.write_mux_tmsg_msg(msg))
+    }
+
+    fn write_mux_rmsg<'t>(&mut self, tag: &'t Tag, msg: &'t Rmsg) -> IoResult<()> {
+        self.write_i8(msg.get_type().to_i8())
+            .and_then(|_| self.write_mux_tag(tag))
+            .and_then(|_| self.write_mux_rmsg_msg(msg))
     }
 
     fn write_mux_tag<'t>(&mut self, tag: &'t Tag) -> IoResult<()> {
@@ -34,54 +47,56 @@ pub trait MuxWriter: FrameWriter {
         self.write(&[b0, b1, b2])
     }
 
-    fn write_mux_msg(&mut self, m: &Msg) -> IoResult<()> {
+    fn write_mux_tmsg_msg(&mut self, m: &Tmsg) -> IoResult<()> {
         match m {
-            &Msg::Treq(ref trace, ref body) => {
+            &Tmsg::Req(ref trace, ref body) => {
                 self.write_mux_trace(trace).and_then(|_| self.write(body.as_slice()))
             },
 
-            &Msg::RreqOk(ref body) => self.write(body.as_slice()),
-            &Msg::RreqError(ref s) => self.write_str(s.as_slice()),
-            &Msg::RreqNack => Ok(()),
-
-            &Msg::Tdispatch(ref contexts, ref dst, ref dtab, ref body) => {
+            &Tmsg::Dispatch(ref contexts, ref dst, ref dtab, ref body) => {
                 self.write_mux_contexts(contexts.as_slice())
                     .and_then(|_| self.write_len_str(dst.as_slice()))
                     .and_then(|_| self.write_mux_dtab(dtab))
                     .and_then(|_| self.write(body.as_slice()))
             },
 
-            &Msg::RdispatchOk(ref contexts, ref body) => {
+            &Tmsg::Drain | &Tmsg::Ping => Ok(()),
+
+            &Tmsg::Discarded(ref which, ref msg) => {
+                self.write_mux_tag(which).and_then(|_| self.write_str(msg.as_slice()))
+            },
+
+            &Tmsg::Lease(unit, amount) => {
+                self.write_u8(unit).and_then(|_| self.write_be_u64(amount))
+            },
+        }
+    }
+
+    fn write_mux_rmsg_msg(&mut self, m: &Rmsg) -> IoResult<()> {
+        match m {
+            &Rmsg::ReqOk(ref body) => self.write(body.as_slice()),
+            &Rmsg::ReqError(ref s) => self.write_str(s.as_slice()),
+            &Rmsg::ReqNack => Ok(()),
+
+            &Rmsg::DispatchOk(ref contexts, ref body) => {
                 self.write_u8(0) // status
                     .and_then(|_| self.write_mux_contexts(contexts.as_slice()))
                     .and_then(|_| self.write(body.as_slice()))
             },
-            &Msg::RdispatchError(ref contexts, ref msg) => {
+            &Rmsg::DispatchError(ref contexts, ref msg) => {
                 self.write_u8(1) // status
                     .and_then(|_| self.write_mux_contexts(contexts.as_slice()))
                     .and_then(|_| self.write_str(msg.as_slice()))
             },
-            &Msg::RdispatchNack(ref contexts) => {
+            &Rmsg::DispatchNack(ref contexts) => {
                 self.write_u8(2).and_then(|_| {
                     self.write_mux_contexts(contexts.as_slice())
                 })
             },
 
-            &Msg::Tdrain | &Msg::Rdrain | &Msg::Tping | &Msg::Rping => {
-                Ok(())
-            },
+            &Rmsg::Drain | &Rmsg::Ping => Ok(()),
 
-            &Msg::Tdiscarded(ref which, ref msg) => {
-                self.write_mux_tag(which).and_then(|_| self.write_str(msg.as_slice()))
-            },
-
-            &Msg::Tlease(unit, amount) => {
-                self.write_u8(unit).and_then(|_| self.write_be_u64(amount))
-            },
-
-            &Msg::Rerr(ref msg) => {
-                self.write_str(msg.as_slice())
-            },
+            &Rmsg::Err(ref msg) => self.write_str(msg.as_slice())
         }
     }
 
@@ -158,18 +173,18 @@ impl<W: FrameWriter> MuxWriter for W {}
 #[cfg(test)]
 mod test {
     use std::io::MemWriter;
-    use proto::{Msg, Tag};
+    use proto::{Tmsg, Tag};
     use super::MuxWriter;
 
-    fn encode_frame(tag: Tag, msg: Msg) -> Vec<u8> {
+    fn encode_frame(tag: Tag, msg: Tmsg) -> Vec<u8> {
         let mut buf = MemWriter::new();
-        buf.write_mux_frame(&tag, &msg).ok();
+        buf.write_mux_framed_tmsg(&tag, &msg).ok();
         buf.into_inner()
     }
 
     #[test]
     fn test_discarded() {
-        let vec = encode_frame(Tag(0, 0, 0), Msg::Tdiscarded(Tag(0, 1, 2), "BAD".to_string()));
+        let vec = encode_frame(Tag(0, 0, 0), Tmsg::Discarded(Tag(0, 1, 2), "BAD".to_string()));
         assert_eq!(vec, vec![
             00, 00, 00, 10, // size
             66, // type

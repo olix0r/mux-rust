@@ -11,9 +11,7 @@ use std::sync::atomic::{AtomicUint, Ordering};
 use std::thread::Thread;
 use std::time::Duration;
 
-use mux::proto::*;
-use mux::reader::MuxReader;
-use mux::writer::MuxWriter;
+use mux::*;
 
 #[allow(unstable)]
 fn main() {
@@ -52,7 +50,7 @@ fn main() {
                     //conn.set_write_timeout(Some(50));
 
                     loop {
-                        let (tag, req) = match conn.read_mux_frame() {
+                        let (tag, req) = match conn.read_mux_frame_tx() {
                             Err(ioe) => {
                                 println!("{}: read error: {}", id, ioe);
                                 break;
@@ -61,14 +59,14 @@ fn main() {
                         };
 
                         let rsp = match req {
-                            Msg::Treq(_, body) => Msg::RreqOk(body),
-                            Msg::Tdispatch(ctxs, _, _, body) => Msg::RdispatchOk(ctxs, body),
-                            Msg::Tdrain => Msg::Rdrain,
-                            Msg::Tping => Msg::Rping,
-                            _ => Msg::Rerr("idk man".to_string()),
+                            Tmsg::Req(_, body) => Rmsg::ReqOk(body),
+                            Tmsg::Dispatch(ctxs, _, _, body) => Rmsg::DispatchOk(ctxs, body),
+                            Tmsg::Drain => Rmsg::Drain,
+                            Tmsg::Ping => Rmsg::Ping,
+                            _ => Rmsg::Err("idk man".to_string()),
                         };
 
-                        match conn.write_mux_frame(&tag, &rsp) {
+                        match conn.write_mux_framed_rmsg(&tag, &rsp) {
                             Err(ioe) => {
                                 println!("{}: write error: {}", id, ioe);
                                 break;

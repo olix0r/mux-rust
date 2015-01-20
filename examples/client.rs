@@ -10,10 +10,8 @@ use std::sync::atomic::{AtomicUint, Ordering};
 use std::thread::Thread;
 use std::time::Duration;
 
+use mux::*;
 use mux::misc::*;
-use mux::proto::{Msg, Tag};
-use mux::reader::MuxReader;
-use mux::writer::MuxWriter;
 
 #[allow(unstable)]
 fn main() {
@@ -31,7 +29,7 @@ fn main() {
         }
     });
 
-    let tmsg = Msg::Tdispatch(
+    let tmsg = Tmsg::Dispatch(
         Vec::new(),
         "/path".to_string(),
         Dtab(vec![Dentry::new("/from".to_string(), "/to".to_string())]),
@@ -39,7 +37,7 @@ fn main() {
 
     loop {
         match TcpStream::connect(dst) {
-            Err(_) => print!("connect error"),
+            Err(_) => println!("connect error"),
 
             Ok(mut conn) => {
                 let id = format!("{}", conn.socket_name().unwrap());
@@ -49,7 +47,7 @@ fn main() {
 
                 loop {
                     //println!("{}: writing: {}", id, tmsg)
-                    match conn.write_mux_frame(&Tag(1,2,3), &tmsg) {
+                    match conn.write_mux_framed_tmsg(&Tag(1,2,3), &tmsg) {
                         Err(ioe) => {
                             println!("{}: write error: {}", id, ioe);
                             break;
@@ -65,7 +63,7 @@ fn main() {
                     };
                     //println!("{}: wrote: {}", id, tmsg);
 
-                    let (_, _) = match conn.read_mux_frame() {
+                    let (_, _) = match conn.read_mux_frame_rx() {
                         Err(ioe) => {
                             println!("{}: read error: {}", id, ioe);
                             break;

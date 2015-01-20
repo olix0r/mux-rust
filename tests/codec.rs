@@ -3,11 +3,8 @@ extern crate mux;
 use std::clone::Clone;
 use std::io::{Reader, Writer, BufReader, MemWriter};
 
+use mux::{MuxReader, MuxWriter};
 use mux::misc::{Context, Dentry, Dtab};
-use mux::proto::{Msg, Tag};
-use mux::reader::MuxReader;
-use mux::writer::MuxWriter;
-
 
 static TDISPATCH_BUF: &'static [u8] = &[
     0, 0, 0, 65, // frame size
@@ -48,19 +45,11 @@ static TDISPATCH_BUF: &'static [u8] = &[
     // data: [0 .. 20)
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 
-static TAG: Tag = Tag(4,7,9);
-
-fn read_frame<R: Reader>(reader: &mut R) -> (Tag, Msg) {
-    reader.read_mux_frame().unwrap()
-}
-
-fn write_frame<W: Writer>(writer: &mut W, tag: Tag, msg: &Msg) {
-    writer.write_mux_frame(&tag, msg).ok();
-}
+static TAG: mux::Tag = mux::Tag(4,7,9);
 
 #[test]
 fn codec_tdispatch() {
-    let msg = &Msg::Tdispatch(
+    let msg = &mux::Tmsg::Dispatch(
         vec![Context::new(vec![1,2,3,4], vec![6,7]),
              Context::new(vec![3,4], vec![6,7,8])],
         "/BAD".to_string(),
@@ -73,29 +62,31 @@ fn codec_tdispatch() {
         buf.extend(TDISPATCH_BUF.iter().map(|&b| -> u8 { b }));
 
         let mut reader = BufReader::new(buf.as_slice());
-        let (t0, m0) = read_frame(&mut reader);
+        let (t0, m0) = reader.read_mux_frame_tx().unwrap();
         assert_eq!(t0, TAG);
         assert_eq!(m0, *msg);
-        let (t1, m1) = read_frame(&mut reader);
+        let (t1, m1) = reader.read_mux_frame_tx().unwrap();
         assert_eq!(t1, TAG);
         assert_eq!(m1, *msg);
     }
 
     /* writer */ {
         let mut writer = MemWriter::new();
-        write_frame(&mut writer, TAG, msg);
-        write_frame(&mut writer, TAG, msg);
-        write_frame(&mut writer, TAG, msg);
+        writer.write_mux_framed_tmsg(&TAG, msg).ok();
+        writer.write_mux_framed_tmsg(&TAG, msg).ok();
+        writer.write_mux_framed_tmsg(&TAG, msg).ok();
         let buf = writer.into_inner();
 
         let mut reader = BufReader::new(buf.as_slice());
-        let (t0, m0) = read_frame(&mut reader);
+        let (t0, m0) = reader.read_mux_frame_tx().unwrap();
         assert_eq!(t0, TAG);
         assert_eq!(m0, *msg);
-        let (t1, m1) = read_frame(&mut reader);
+
+        let (t1, m1) = reader.read_mux_frame_tx().unwrap();
         assert_eq!(t1, TAG);
         assert_eq!(m1, *msg);
-        let (t2, m2) = read_frame(&mut reader);
+
+        let (t2, m2) = reader.read_mux_frame_tx().unwrap();
         assert_eq!(t2, TAG);
         assert_eq!(m2, *msg);
     }
@@ -104,11 +95,11 @@ fn codec_tdispatch() {
 
 #[test]
 fn codec_rdispatch() {
-    let msg = &Msg::RdispatchOk(Vec::new(), b"nope".to_vec());
-    let tag = Tag(1, 2, 3);
+    let msg = &mux::Rmsg::DispatchOk(Vec::new(), b"nope".to_vec());
+    let tag = mux::Tag(1, 2, 3);
 
     let mut writer = MemWriter::new();
-    write_frame(&mut writer, tag, msg);
+    writer.write_mux_framed_rmsg(&tag, msg).ok();
     let bytes = writer.into_inner();
     let expected = vec![
         0x00, 0x00, 0x00, 0x0b, // frame
@@ -127,14 +118,14 @@ fn codec_rdispatch() {
 
     {
         let mut reader = BufReader::new(bytes.as_slice().slice_from(4));
-        let (t, m) = reader.read_mux().unwrap();
+        let (t, m) = reader.read_mux_rx().unwrap();
         assert_eq!(t, tag);
         assert_eq!(m, *msg);
     }
 
     {
         let mut reader = BufReader::new(bytes.as_slice());
-        let (t, m) = read_frame(&mut reader);
+        let (t, m) = reader.read_mux_frame_rx().unwrap();
         assert_eq!(t, tag);
         assert_eq!(m, *msg);
     }
