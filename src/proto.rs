@@ -132,9 +132,9 @@ impl Rmsg {
             &Rmsg::ReqError(_) => MsgType::Rreq,
             &Rmsg::ReqNack     => MsgType::Rreq,
 
-            &Rmsg::DispatchOk(_, _)     => MsgType::Rdispatch,
-            &Rmsg::DispatchError(_, _)  => MsgType::Rdispatch,
-            &Rmsg::DispatchNack(_)      => MsgType::Rdispatch,
+            &Rmsg::DispatchOk(_, _)    => MsgType::Rdispatch,
+            &Rmsg::DispatchError(_, _) => MsgType::Rdispatch,
+            &Rmsg::DispatchNack(_)     => MsgType::Rdispatch,
 
             &Rmsg::Drain => MsgType::Rdrain,
 
@@ -143,6 +143,11 @@ impl Rmsg {
             &Rmsg::Err(_) => MsgType::Rerr,
         }
     }
+}
+
+pub enum Msg {
+    Tx(Tag, Tmsg),
+    Rx(Tag, Rmsg),
 }
 
 #[cfg(test)]

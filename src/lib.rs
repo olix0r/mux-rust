@@ -6,11 +6,12 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 
-pub use proto::{Tag, Tmsg, Rmsg};
+pub use proto::{Tag, Msg, Tmsg, Rmsg};
 pub use reader::MuxReader;
 pub use writer::MuxWriter;
 
 pub mod misc;
-pub mod proto;
-pub mod reader;
-pub mod writer;
+
+mod proto;
+mod reader;
+mod writer;
