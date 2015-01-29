@@ -1,7 +1,7 @@
 extern crate mux;
 
 use std::clone::Clone;
-use std::io::{Reader, Writer, BufReader, MemWriter};
+use std::old_io::{Reader, Writer, BufReader, MemWriter};
 
 use mux::{MuxReader, MuxWriter};
 use mux::misc::{Context, Dentry, Dtab};

@@ -3,8 +3,8 @@
 extern crate mux;
 
 use std::clone::Clone;
-use std::io::net::tcp::TcpStream;
-use std::io::timer::Timer;
+use std::old_io::net::tcp::TcpStream;
+use std::old_io::timer::Timer;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUint, Ordering};
 use std::thread::Thread;

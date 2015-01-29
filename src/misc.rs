@@ -1,4 +1,4 @@
-use std::io::IoError;
+use std::old_io::IoError;
 
 #[derive(Clone,PartialEq,Eq,Show)]
 pub struct Dentry {

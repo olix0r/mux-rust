@@ -1,6 +1,6 @@
 #[allow(unstable)]
 
-use std::io::{IoResult, IoError, Reader, InvalidInput, BufReader};
+use std::old_io::{IoResult, IoError, Reader, InvalidInput, BufReader};
 
 use misc::{Context, Dtab, Dentry, Trace, Detailed};
 use proto::{Tmsg, Rmsg, MsgType, Tag};
@@ -8,8 +8,10 @@ use proto::{Tmsg, Rmsg, MsgType, Tag};
 struct TraceId(u64, u64, u64);
 
 pub trait FrameReader: Reader {
-    fn read_be_u32_frame(&mut self) -> IoResult<Vec<u8>> {
-        self.read_be_u32().and_then(|sz| {
+    fn read_frame_len(&mut self) -> IoResult<u32> { self.read_be_u32() }
+
+    fn read_frame(&mut self) -> IoResult<Vec<u8>> {
+        self.read_frame_len().and_then(|sz| {
             self.read_exact(sz as usize)
         })
     }
@@ -20,14 +22,14 @@ impl<R: Reader> FrameReader for R {}
 pub trait MuxReader: FrameReader {
 
     fn read_mux_framed_tmsg(&mut self) -> IoResult<(Tag, Tmsg)> {
-        self.read_be_u32_frame().and_then(|bytes| {
+        self.read_frame().and_then(|bytes| {
             let mut buf = BufReader::new(bytes.as_slice());
             buf.read_mux_tmsg()
         })
     }
 
     fn read_mux_framed_rmsg(&mut self) -> IoResult<(Tag, Rmsg)> {
-        self.read_be_u32_frame().and_then(|bytes| {
+        self.read_frame().and_then(|bytes| {
             let mut buf = BufReader::new(bytes.as_slice());
             buf.read_mux_rmsg()
         })
@@ -310,7 +312,7 @@ impl<R: Reader> MuxReader for R {}
 mod test {
     extern crate test;
 
-    use std::io::{BufReader, MemWriter, IoResult};
+    use std::old_io::{BufReader, MemWriter, IoResult};
 
     use proto::Tag;
     use super::MuxReader;

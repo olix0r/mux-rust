@@ -3,9 +3,9 @@
 
 extern crate mux;
 
-use std::io::{Acceptor, Listener};
-use std::io::net::tcp::TcpListener;
-use std::io::timer::Timer;
+use std::old_io::{Acceptor, Listener};
+use std::old_io::net::tcp::TcpListener;
+use std::old_io::timer::Timer;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUint, Ordering};
 use std::thread::Thread;

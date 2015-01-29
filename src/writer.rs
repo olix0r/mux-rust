@@ -1,6 +1,6 @@
 #[allow(unstable)]
 
-use std::io::{IoResult, Writer, MemWriter};
+use std::old_io::{IoResult, Writer, MemWriter};
 
 use misc::{Context, Dtab, Dentry, Trace};
 use proto::{Tag, Tmsg, Rmsg};
@@ -172,7 +172,7 @@ impl<W: FrameWriter> MuxWriter for W {}
 
 #[cfg(test)]
 mod test {
-    use std::io::MemWriter;
+    use std::old_io::MemWriter;
     use proto::{Tmsg, Tag};
     use super::MuxWriter;
 

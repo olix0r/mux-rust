@@ -153,7 +153,7 @@ pub enum Msg {
 #[cfg(test)]
 mod test {
     use misc::{Context, Dentry, Dtab};
-    use std::io::{Reader, BufReader, MemWriter};
+    use std::old_io::{Reader, BufReader, MemWriter};
     use reader::MuxReader;
     use writer::MuxWriter;
     use super::{MsgType, Tmsg, Tag};
