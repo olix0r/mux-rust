@@ -1,6 +1,6 @@
 use misc::{Context, Dtab, Trace};
 
-#[derive(Clone,PartialEq,Eq,Show,Copy)]
+#[derive(Clone,PartialEq,Eq,Debug,Copy)]
 pub struct Tag(pub u8, pub u8, pub u8);
 
 pub static MARKER_TAG: Tag = Tag(0,0,0);
@@ -26,7 +26,7 @@ mod types {
 }
 
 
-#[derive(Clone,Eq,PartialEq,Show)]
+#[derive(Clone,Eq,PartialEq,Debug)]
 pub enum MsgType {
     Treq, Rreq,
     Tdispatch, Rdispatch,
@@ -85,7 +85,7 @@ impl MsgType {
     }
 }
 
-#[derive(Clone,Eq,PartialEq,Show)]
+#[derive(Clone,Eq,PartialEq,Debug)]
 pub enum Tmsg {
     Req(Option<Trace>, Vec<u8>),
     Dispatch(Vec<Context>, String, Dtab, Vec<u8>),
@@ -109,7 +109,7 @@ impl Tmsg {
     }
 }
 
-#[derive(Clone,Eq,PartialEq,Show)]
+#[derive(Clone,Eq,PartialEq,Debug)]
 pub enum Rmsg {
     ReqOk(Vec<u8>),
     ReqError(String),

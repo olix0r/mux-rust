@@ -1,6 +1,6 @@
 use std::old_io::IoError;
 
-#[derive(Clone,PartialEq,Eq,Show)]
+#[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Dentry {
     pub src: String,
     pub tree: String }
@@ -9,23 +9,23 @@ impl Dentry {
     pub fn new(s: String, t: String) -> Dentry { Dentry{src: s, tree: t} }
 }
 
-#[derive(Clone,PartialEq,Eq,Show)]
+#[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Dtab(pub Vec<Dentry>);
 impl Dtab {
     #[inline]
     pub fn empty() -> Dtab { Dtab(Vec::with_capacity(0)) }
 }
 
-#[derive(Clone,PartialEq,Eq,Show)]
+#[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Context { pub key: Vec<u8>, pub val: Vec<u8> }
 impl Context {
     pub fn new(k: Vec<u8>, v: Vec<u8>) -> Context { Context{key: k, val: v} }
 }
 
-#[derive(Clone,PartialEq,Eq,Show)]
+#[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Contexts(pub Vec<Context>);
 
-#[derive(Clone,Copy,Eq,PartialEq,Show)]
+#[derive(Clone,Copy,Eq,PartialEq,Debug)]
 pub struct Trace {
     pub span_id: u64,
     pub parent_id: u64,
